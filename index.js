@@ -4,7 +4,6 @@ import admin from "firebase-admin";
 import { google } from "googleapis";
 import fs from "fs";
 
-
 // =======================================================
 // 1. CONFIGURATION ET INITIALISATION (AU DÉBUT)
 // =======================================================
@@ -175,12 +174,6 @@ app.post("/api/book", async (req, res) => {
                 timeZone: "Europe/Paris",
             },
         };
-
-        await calendar.events.insert({
-            calendarId: "rowan.blanc@gmail.com", // **À vérifier :** Mettez votre ID de calendrier ici
-            requestBody: event,
-        });
-        // 2. Insertion sur le deuxième calendrier
         await calendar.events.insert({
             calendarId: "msallaky@gmail.com", // <-- Le second calendarId
             requestBody: event,
@@ -190,7 +183,7 @@ app.post("/api/book", async (req, res) => {
 
     } catch (error) {
         console.error("Erreur de réservation:", error);
-        res.status(500).json({ error: "Erreur serveur" });
+        res.status(500).json({ error: "Impossible" });
     }
 });
 
@@ -202,7 +195,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Serveur démarré sur le port ${PORT}`);
 });
-
-
-
-
