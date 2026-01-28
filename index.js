@@ -103,6 +103,29 @@ app.get("/health", (req, res) => {
     res.status(200).send("OK");
 });
 
+// --- NOUVELLE ROUTE : RÉCUPÉRER LES CRÉNEAUX OCCUPÉS ---
+app.get("/api/busy-slots", async (req, res) => {
+    const { date } = req.query; // On récupère la date depuis l'URL (ex: ?date=2024-05-20)
+
+    if (!date) {
+        return res.status(400).json({ error: "Date manquante" });
+    }
+
+    try {
+        const snapshot = await db.collection("appointments")
+            .where("date", "==", date)
+            .get();
+
+        // On crée un tableau contenant uniquement les heures (ex: ["14:00", "15:30"])
+        const busySlots = snapshot.docs.map(doc => doc.data().time);
+        
+        res.json({ busySlots });
+    } catch (error) {
+        console.error("Erreur busy-slots:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
 // --- ROUTE 2: CRÉER UN RENDEZ-VOUS ---
 app.post("/api/book", async (req, res) => {
     
