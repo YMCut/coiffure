@@ -215,7 +215,7 @@ app.post("/api/book", async (req, res) => {
 // 4. ROUTES ADMIN (SÉCURISÉES)
 // =======================================================
 
-const ADMIN_KEY = process.env.ADMIN_KEY || "admin";
+const ADMIN_KEY = process.env.ADMIN_KEY || "Younesladinde";
 
 // Verifier la clé admin
 const checkAuth = (req, res, next) => {
