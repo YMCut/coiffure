@@ -212,6 +212,54 @@ app.post("/api/book", async (req, res) => {
 
 
 // =======================================================
+// 4. ROUTES ADMIN (SÉCURISÉES)
+// =======================================================
+
+const ADMIN_KEY = process.env.ADMIN_KEY || "admin";
+
+// Verifier la clé admin
+const checkAuth = (req, res, next) => {
+    const key = req.headers['x-admin-key'];
+    if (key === ADMIN_KEY) {
+        next();
+    } else {
+        res.status(401).json({ error: "Non autorisé" });
+    }
+};
+
+// --- ADMIN : CHANGER LE STATUT DU SALON ---
+app.post("/api/admin/toggle-status", checkAuth, async (req, res) => {
+    const { is_open } = req.body;
+    try {
+        await db.collection("settings").doc("status").set({ is_open });
+        res.json({ success: true, is_open });
+    } catch (error) {
+        res.status(500).json({ error: "Erreur" });
+    }
+});
+
+// --- ADMIN : VOIR TOUS LES RDV ---
+app.get("/api/admin/appointments", checkAuth, async (req, res) => {
+    try {
+        const snapshot = await db.collection("appointments").orderBy("date", "asc").get();
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        res.json(list);
+    } catch (error) {
+        res.status(500).json({ error: "Erreur" });
+    }
+});
+
+// --- ADMIN : SUPPRIMER/DÉBLOQUER UN RDV ---
+app.delete("/api/admin/appointment/:id", checkAuth, async (req, res) => {
+    try {
+        await db.collection("appointments").doc(req.params.id).delete();
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "Erreur" });
+    }
+});
+
+// =======================================================
 // 4. DÉMARRAGE SERVEUR
 // =======================================================
 const PORT = process.env.PORT || 3000;
