@@ -241,7 +241,7 @@ app.post("/api/admin/toggle-status", checkAuth, async (req, res) => {
 // --- ADMIN : VOIR TOUS LES RDV ---
 app.get("/api/admin/appointments", checkAuth, async (req, res) => {
     try {
-        const snapshot = await db.collection("appointments").orderBy("date", "asc").get();
+        const snapshot = await db.collection("appointments").orderBy("date", "desc").get();
         const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         res.json(list);
     } catch (error) {
