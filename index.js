@@ -4,7 +4,7 @@ import cors from "cors";
 import admin from "firebase-admin";
 import { google } from "googleapis";
 import fs from "fs";
-import nodemailer from "nodemailer";
+import * as Brevo from '@getbrevo/brevo'; // Remplacement de Nodemailer
 
 // =======================================================
 // 1. CONFIGURATION & INITIALISATION
@@ -25,17 +25,9 @@ const auth = new google.auth.GoogleAuth({
 });
 const calendar = google.calendar({ version: "v3", auth });
 
-// Configuration Outlook / Brevo (SMTP)
-const transporter = nodemailer.createTransport({
-    host: "smtp-relay.brevo.com", 
-    port: 587,
-    secure: false, 
-    auth: {
-        user: process.env.MAIL_USER,
-        pass: process.env.MAIL_PASS,
-    },
-    tls: { ciphers: 'SSLv3' }
-});
+// Configuration API Brevo (Beaucoup plus fiable que le SMTP sur Render)
+const apiInstance = new Brevo.TransactionalEmailsApi();
+apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.MAIL_PASS);
 
 const app = express();
 app.set('trust proxy', true);
@@ -71,7 +63,7 @@ cleanupOldAppointments();
 // 3. LOGIQUE DE VÉRIFICATION PAR MAIL (OTP)
 // =======================================================
 
-// ÉTAPE 1 : Envoyer le code de validation
+// ÉTAPE 1 : Envoyer le code de validation via API BREVO
 app.post("/api/verify-request", async (req, res) => {
     const { email, clientName, date, time, phone } = req.body;
     if (!email || !date || !time) return res.status(400).json({ error: "Données manquantes" });
@@ -85,27 +77,33 @@ app.post("/api/verify-request", async (req, res) => {
             createdAt: new Date()
         });
 
-        await transporter.sendMail({
-            from: process.env.MAIL_FROM || '"YM Coiffure" <coiffureym63@outlook.com>',
-            to: email,
-            subject: `Votre code de confirmation : ${otp}`,
-            html: `
-                <div style="font-family: sans-serif; text-align: center; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-                    <h2>YM COIFFURE</h2>
-                    <p>Bonjour <b>${clientName}</b>,</p>
-                    <p>Voici votre code pour confirmer votre rendez-vous du ${date} à ${time} :</p>
-                    <h1 style="background: #000; color: #fff; padding: 10px; letter-spacing: 10px;">${otp}</h1>
-                    <p style="font-size: 12px; color: #888;">Ce code expire dans 15 minutes.</p>
-                </div>`
-        });
-        res.json({ success: true, message: "Code envoyé !" });
+        // Envoi via l'API Brevo
+        const sendSmtpEmail = new Brevo.SendSmtpEmail();
+        sendSmtpEmail.subject = `Votre code de confirmation : ${otp}`;
+        sendSmtpEmail.htmlContent = `
+            <div style="font-family: sans-serif; text-align: center; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                <h2>YM COIFFURE</h2>
+                <p>Bonjour <b>${clientName}</b>,</p>
+                <p>Voici votre code pour confirmer votre rendez-vous du ${date} à ${time} :</p>
+                <h1 style="background: #000; color: #fff; padding: 10px; letter-spacing: 10px;">${otp}</h1>
+                <p style="font-size: 12px; color: #888;">Ce code expire dans 15 minutes.</p>
+            </div>`;
+        sendSmtpEmail.sender = { "name": "YM Coiffure", "email": "coiffureym63@outlook.com" };
+        sendSmtpEmail.to = [{ "email": email, "name": clientName }];
+
+        await apiInstance.sendTransacEmail(sendSmtpEmail);
+        
+        console.log(`✅ Code OTP envoyé à ${email}`);
+        return res.json({ success: true, message: "Code envoyé !" });
+
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Erreur lors de l'envoi du mail" });
+        console.error("❌ Erreur API Brevo:", error);
+        // Important : on renvoie une erreur pour débloquer le bouton sur le site
+        return res.status(500).json({ error: "Impossible d'envoyer le mail. Vérifiez votre clé API Brevo." });
     }
 });
 
-// ÉTAPE 2 : Valider le code et créer le RDV (Google + Firestore)
+// ÉTAPE 2 : Valider le code et créer le RDV
 app.post("/api/verify-confirm", async (req, res) => {
     const { email, code } = req.body;
 
@@ -145,10 +143,10 @@ app.post("/api/verify-confirm", async (req, res) => {
         // 3. Supprimer la vérification temporaire
         await db.collection("temp_verifications").doc(email).delete();
 
-        res.json({ success: true, message: "Rendez-vous confirmé !" });
+        return res.json({ success: true, message: "Rendez-vous confirmé !" });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Erreur lors de la confirmation finale" });
+        console.error("❌ Erreur confirmation:", error);
+        return res.status(500).json({ error: "Erreur lors de la confirmation finale." });
     }
 });
 
@@ -197,7 +195,6 @@ app.delete("/api/admin/appointment/:id", checkAuth, async (req, res) => {
     try {
         const doc = await db.collection("appointments").doc(req.params.id).get();
         if (doc.exists && doc.data().calendarEventId) {
-            // Supprimer de Google Calendar aussi
             await calendar.events.delete({ calendarId: CALENDAR_ID, eventId: doc.data().calendarEventId }).catch(()=>{});
         }
         await db.collection("appointments").doc(req.params.id).delete();
