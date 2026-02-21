@@ -4,7 +4,7 @@ import cors from "cors";
 import admin from "firebase-admin";
 import { google } from "googleapis";
 import fs from "fs";
-import * as Brevo from '@getbrevo/brevo'; // Remplacement de Nodemailer
+import * as Brevo from '@getbrevo/brevo'; 
 
 // =======================================================
 // 1. CONFIGURATION & INITIALISATION
@@ -25,9 +25,12 @@ const auth = new google.auth.GoogleAuth({
 });
 const calendar = google.calendar({ version: "v3", auth });
 
-// Configuration API Brevo (Beaucoup plus fiable que le SMTP sur Render)
+// --- CORRECTION INITIALISATION BREVO ---
+// On utilise une méthode plus robuste pour créer l'instance
 const apiInstance = new Brevo.TransactionalEmailsApi();
-apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.MAIL_PASS);
+// On configure la clé API (le "0" est l'index par défaut de la clé)
+apiInstance.setApiKey(0, process.env.MAIL_PASS); 
+// ----------------------------------------
 
 const app = express();
 app.set('trust proxy', true);
@@ -63,7 +66,6 @@ cleanupOldAppointments();
 // 3. LOGIQUE DE VÉRIFICATION PAR MAIL (OTP)
 // =======================================================
 
-// ÉTAPE 1 : Envoyer le code de validation via API BREVO
 app.post("/api/verify-request", async (req, res) => {
     const { email, clientName, date, time, phone } = req.body;
     if (!email || !date || !time) return res.status(400).json({ error: "Données manquantes" });
@@ -71,13 +73,11 @@ app.post("/api/verify-request", async (req, res) => {
     try {
         const otp = Math.floor(1000 + Math.random() * 9000).toString();
         
-        // Stockage temporaire (expire après 15 min)
         await db.collection("temp_verifications").doc(email).set({
             otp, clientName, date, time, phone,
             createdAt: new Date()
         });
 
-        // Envoi via l'API Brevo
         const sendSmtpEmail = new Brevo.SendSmtpEmail();
         sendSmtpEmail.subject = `Votre code de confirmation : ${otp}`;
         sendSmtpEmail.htmlContent = `
@@ -98,7 +98,6 @@ app.post("/api/verify-request", async (req, res) => {
 
     } catch (error) {
         console.error("❌ Erreur API Brevo:", error);
-        // Important : on renvoie une erreur pour débloquer le bouton sur le site
         return res.status(500).json({ error: "Impossible d'envoyer le mail. Vérifiez votre clé API Brevo." });
     }
 });
@@ -115,7 +114,6 @@ app.post("/api/verify-confirm", async (req, res) => {
 
         const data = verifyDoc.data();
 
-        // 1. Ajouter à Google Calendar
         const startISO = `${data.date}T${data.time}:00`;
         const endDate = new Date(new Date(startISO).getTime() + 30 * 60000);
         
@@ -129,7 +127,6 @@ app.post("/api/verify-confirm", async (req, res) => {
             },
         });
 
-        // 2. Enregistrer définitivement dans Firestore
         await db.collection("appointments").add({
             date: data.date,
             time: data.time,
@@ -140,7 +137,6 @@ app.post("/api/verify-confirm", async (req, res) => {
             createdAt: new Date()
         });
 
-        // 3. Supprimer la vérification temporaire
         await db.collection("temp_verifications").doc(email).delete();
 
         return res.json({ success: true, message: "Rendez-vous confirmé !" });
