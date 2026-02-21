@@ -4,8 +4,10 @@ import cors from "cors";
 import admin from "firebase-admin";
 import { google } from "googleapis";
 import fs from "fs";
-import * as Brevo from '@getbrevo/brevo'; 
-import { TransactionalEmailsApi, SendSmtpEmail, TransactionalEmailsApiApiKeys } from '@getbrevo/brevo';
+import pkg from '@getbrevo/brevo'; // Méthode d'import la plus stable pour Node 22
+
+// On extrait proprement les outils Brevo du package
+const { TransactionalEmailsApi, SendSmtpEmail, TransactionalEmailsApiApiKeys } = pkg;
 
 // =======================================================
 // 1. CONFIGURATION & INITIALISATION
@@ -26,12 +28,9 @@ const auth = new google.auth.GoogleAuth({
 });
 const calendar = google.calendar({ version: "v3", auth });
 
-// --- CORRECTION INITIALISATION BREVO ---
-// On utilise une méthode plus robuste pour créer l'instance
-const apiInstance = new Brevo.TransactionalEmailsApi();
-// On configure la clé API (le "0" est l'index par défaut de la clé)
-apiInstance.setApiKey(0, process.env.MAIL_PASS); 
-// ----------------------------------------
+// Configuration API Brevo
+const apiInstance = new TransactionalEmailsApi();
+apiInstance.setApiKey(TransactionalEmailsApiApiKeys.apiKey, process.env.MAIL_PASS);
 
 const app = express();
 app.set('trust proxy', true);
@@ -79,12 +78,10 @@ app.post("/api/verify-request", async (req, res) => {
             createdAt: new Date()
         });
 
-        // --- LES 2 LIGNES CORRIGÉES ICI ---
-        const sendSmtpEmail = new SendSmtpEmail(); // On a enlevé "Brevo."
-        // ----------------------------------
-
-        sendSmtpEmail.subject = `Votre code de confirmation : ${otp}`;
-        sendSmtpEmail.htmlContent = `
+        // Préparation de l'email via le constructeur extrait
+        const emailData = new SendSmtpEmail();
+        emailData.subject = `Votre code de confirmation : ${otp}`;
+        emailData.htmlContent = `
             <div style="font-family: sans-serif; text-align: center; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
                 <h2>YM COIFFURE</h2>
                 <p>Bonjour <b>${clientName}</b>,</p>
@@ -92,10 +89,11 @@ app.post("/api/verify-request", async (req, res) => {
                 <h1 style="background: #000; color: #fff; padding: 10px; letter-spacing: 10px;">${otp}</h1>
                 <p style="font-size: 12px; color: #888;">Ce code expire dans 15 minutes.</p>
             </div>`;
-        sendSmtpEmail.sender = { "name": "YM Coiffure", "email": "coiffureym63@outlook.com" };
-        sendSmtpEmail.to = [{ "email": email, "name": clientName }];
+        emailData.sender = { "name": "YM Coiffure", "email": "coiffureym63@outlook.com" };
+        emailData.to = [{ "email": email, "name": clientName }];
 
-        await apiInstance.sendTransacEmail(sendSmtpEmail);
+        // Envoi via l'API
+        await apiInstance.sendTransacEmail(emailData);
         
         console.log(`✅ Code OTP envoyé à ${email}`);
         return res.json({ success: true, message: "Code envoyé !" });
