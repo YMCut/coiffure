@@ -4,13 +4,6 @@ import cors from "cors";
 import admin from "firebase-admin";
 import { google } from "googleapis";
 import fs from "fs";
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const Brevo = require('@getbrevo/brevo');
-
-// On initialise les classes depuis l'objet chargé par require
-const apiInstance = new Brevo.TransactionalEmailsApi();
-apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.MAIL_PASS);
 
 // =======================================================
 // 1. CONFIGURATION & INITIALISATION
@@ -31,10 +24,6 @@ const auth = new google.auth.GoogleAuth({
 });
 const calendar = google.calendar({ version: "v3", auth });
 
-// Configuration API Brevo
-const apiInstance = new TransactionalEmailsApi();
-apiInstance.setApiKey(TransactionalEmailsApiApiKeys.apiKey, process.env.MAIL_PASS);
-
 const app = express();
 app.set('trust proxy', true);
 app.use(cors());
@@ -51,22 +40,18 @@ async function cleanupOldAppointments() {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const limitDateString = sevenDaysAgo.toISOString().split('T')[0]; 
-
     try {
         const snapshot = await db.collection("appointments").where("date", "<=", limitDateString).get();
         if (snapshot.empty) return;
         const batch = db.batch();
         snapshot.docs.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
-        console.log(`✅ Nettoyage : ${snapshot.size} anciens RDV supprimés.`);
-    } catch (error) {
-        console.error("❌ Erreur nettoyage:", error);
-    }
+    } catch (error) { console.error("❌ Erreur nettoyage:", error); }
 }
 cleanupOldAppointments();
 
 // =======================================================
-// 3. LOGIQUE DE VÉRIFICATION PAR MAIL (OTP)
+// 3. LOGIQUE DE VÉRIFICATION PAR MAIL (VIA FETCH API)
 // =======================================================
 
 app.post("/api/verify-request", async (req, res) => {
@@ -81,44 +66,52 @@ app.post("/api/verify-request", async (req, res) => {
             createdAt: new Date()
         });
 
-        // Préparation de l'email via le constructeur extrait
-        const emailData = new SendSmtpEmail();
-        emailData.subject = `Votre code de confirmation : ${otp}`;
-        emailData.htmlContent = `
-            <div style="font-family: sans-serif; text-align: center; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-                <h2>YM COIFFURE</h2>
-                <p>Bonjour <b>${clientName}</b>,</p>
-                <p>Voici votre code pour confirmer votre rendez-vous du ${date} à ${time} :</p>
-                <h1 style="background: #000; color: #fff; padding: 10px; letter-spacing: 10px;">${otp}</h1>
-                <p style="font-size: 12px; color: #888;">Ce code expire dans 15 minutes.</p>
-            </div>`;
-        emailData.sender = { "name": "YM Coiffure", "email": "coiffureym63@outlook.com" };
-        emailData.to = [{ "email": email, "name": clientName }];
+        // ENVOI VIA FETCH (Pas de bibliothèque nécessaire)
+        const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+            method: "POST",
+            headers: {
+                "accept": "application/json",
+                "api-key": process.env.MAIL_PASS,
+                "content-type": "application/json"
+            },
+            body: JSON.stringify({
+                sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
+                to: [{ email: email, name: clientName }],
+                subject: `Votre code de confirmation : ${otp}`,
+                htmlContent: `
+                    <div style="font-family: sans-serif; text-align: center; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                        <h2>YM COIFFURE</h2>
+                        <p>Bonjour <b>${clientName}</b>,</p>
+                        <p>Voici votre code pour confirmer votre rendez-vous du ${date} à ${time} :</p>
+                        <h1 style="background: #000; color: #fff; padding: 10px; letter-spacing: 10px;">${otp}</h1>
+                        <p style="font-size: 12px; color: #888;">Ce code expire dans 15 minutes.</p>
+                    </div>`
+            })
+        });
 
-        // Envoi via l'API
-        await apiInstance.sendTransacEmail(emailData);
-        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(JSON.stringify(errorData));
+        }
+
         console.log(`✅ Code OTP envoyé à ${email}`);
         return res.json({ success: true, message: "Code envoyé !" });
 
     } catch (error) {
-        console.error("❌ Erreur API Brevo:", error);
-        return res.status(500).json({ error: "Impossible d'envoyer le mail. Vérifiez votre clé API Brevo." });
+        console.error("❌ Erreur Envoi Mail:", error.message);
+        return res.status(500).json({ error: "Erreur lors de l'envoi du mail." });
     }
 });
 
 // ÉTAPE 2 : Valider le code et créer le RDV
 app.post("/api/verify-confirm", async (req, res) => {
     const { email, code } = req.body;
-
     try {
         const verifyDoc = await db.collection("temp_verifications").doc(email).get();
         if (!verifyDoc.exists || verifyDoc.data().otp !== code) {
             return res.status(400).json({ error: "Code invalide ou expiré" });
         }
-
         const data = verifyDoc.data();
-
         const startISO = `${data.date}T${data.time}:00`;
         const endDate = new Date(new Date(startISO).getTime() + 30 * 60000);
         
@@ -133,17 +126,12 @@ app.post("/api/verify-confirm", async (req, res) => {
         });
 
         await db.collection("appointments").add({
-            date: data.date,
-            time: data.time,
-            clientName: data.clientName,
-            phone: data.phone,
-            email: email,
-            calendarEventId: googleEvent.data.id,
+            date: data.date, time: data.time, clientName: data.clientName,
+            phone: data.phone, email: email, calendarEventId: googleEvent.data.id,
             createdAt: new Date()
         });
 
         await db.collection("temp_verifications").doc(email).delete();
-
         return res.json({ success: true, message: "Rendez-vous confirmé !" });
     } catch (error) {
         console.error("❌ Erreur confirmation:", error);
