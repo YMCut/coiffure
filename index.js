@@ -27,7 +27,7 @@ const calendar = google.calendar({ version: "v3", auth });
 
 // Configuration Outlook / Brevo (SMTP)
 const transporter = nodemailer.createTransport({
-    host: "smtp-mail.outlook.com", 
+    host: "smtp-relay.brevo.com", 
     port: 587,
     secure: false, 
     auth: {
