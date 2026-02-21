@@ -4,10 +4,13 @@ import cors from "cors";
 import admin from "firebase-admin";
 import { google } from "googleapis";
 import fs from "fs";
-import pkg from '@getbrevo/brevo'; // Méthode d'import la plus stable pour Node 22
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const Brevo = require('@getbrevo/brevo');
 
-// On extrait proprement les outils Brevo du package
-const { TransactionalEmailsApi, SendSmtpEmail, TransactionalEmailsApiApiKeys } = pkg;
+// On initialise les classes depuis l'objet chargé par require
+const apiInstance = new Brevo.TransactionalEmailsApi();
+apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.MAIL_PASS);
 
 // =======================================================
 // 1. CONFIGURATION & INITIALISATION
