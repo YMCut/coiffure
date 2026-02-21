@@ -5,6 +5,7 @@ import admin from "firebase-admin";
 import { google } from "googleapis";
 import fs from "fs";
 import * as Brevo from '@getbrevo/brevo'; 
+import { TransactionalEmailsApi, SendSmtpEmail, TransactionalEmailsApiApiKeys } from '@getbrevo/brevo';
 
 // =======================================================
 // 1. CONFIGURATION & INITIALISATION
@@ -78,7 +79,10 @@ app.post("/api/verify-request", async (req, res) => {
             createdAt: new Date()
         });
 
-        const sendSmtpEmail = new Brevo.SendSmtpEmail();
+        // --- LES 2 LIGNES CORRIGÉES ICI ---
+        const sendSmtpEmail = new SendSmtpEmail(); // On a enlevé "Brevo."
+        // ----------------------------------
+
         sendSmtpEmail.subject = `Votre code de confirmation : ${otp}`;
         sendSmtpEmail.htmlContent = `
             <div style="font-family: sans-serif; text-align: center; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
