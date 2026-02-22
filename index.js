@@ -58,13 +58,14 @@ async function cleanupOldAppointments() {
 }
 
 /**
- * Envoie un mail de rappel exactement 24h avant le rendez-vous
+ * Envoie un mail de rappel 24h avant, 
+ * seulement si le rendez-vous n'est pas "tout frais" (créé il y a plus de 1h)
  */
 async function sendReminders() {
-    console.log("🕒 Vérification des rappels (Cycle 24h)...");
+    console.log("🕒 Vérification des rappels (Sécurité 24h)...");
     const now = new Date();
     
-    // On calcule la date de DEMAIN à la même heure
+    // 1. Date de demain pour le rappel
     const tomorrow = new Date(now.getTime() + (24 * 60 * 60 * 1000));
     const targetDay = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Europe/Paris",
@@ -72,6 +73,10 @@ async function sendReminders() {
     }).format(tomorrow);
     
     const targetHour = tomorrow.getHours().toString().padStart(2, '0');
+
+    // 2. Calcul du délai de sécurité (ex: 1 heure)
+    // On n'envoie pas de rappel si le RDV a été créé il y a moins de 60 minutes
+    const securityDelay = 60 * 60 * 1000; 
 
     try {
         const snapshot = await db.collection("appointments")
@@ -82,11 +87,22 @@ async function sendReminders() {
         for (const doc of snapshot.docs) {
             const data = doc.data();
             
-            // On vérifie si l'heure du RDV (ex: "14:30") correspond à l'heure cible (ex: "14")
+            // Vérification de l'heure
             if (data.time.startsWith(targetHour + ":")) {
-                console.log(`📧 Envoi rappel 24h à : ${data.clientName}`);
+                
+                // --- SÉCURITÉ ---
+                // On compare l'heure actuelle avec l'heure de création du RDV (createdAt)
+                const createdAt = data.createdAt.toDate(); // Conversion Firestore Timestamp vers Date JS
+                const timeSinceCreation = now.getTime() - createdAt.getTime();
 
-                const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+                if (timeSinceCreation < securityDelay) {
+                    console.log(`⏭️ Rappel ignoré pour ${data.clientName} : RDV trop récent (créé il y a moins d'une heure).`);
+                    continue; // On passe au suivant sans envoyer
+                }
+
+                console.log(`📧 Envoi rappel 24h à : ${data.email}`);
+
+                await fetch("https://api.brevo.com/v3/smtp/email", {
                     method: "POST",
                     headers: {
                         "accept": "application/json",
@@ -104,16 +120,11 @@ async function sendReminders() {
                                 <p>Petit rappel pour votre rendez-vous de demain à :</p>
                                 <p style="font-size:22px; font-weight:bold;">${data.time}</p>
                                 <p>📍 58 rue Abbé Prévost, Clermont-Ferrand</p>
-                                <hr style="border:0; border-top:1px solid #eee; margin:20px 0;">
-                                <p style="font-size:12px; color:#888;">Merci de prévenir au plus vite en cas d'empêchement.</p>
                             </div>`
                     })
                 });
 
-                if (response.ok) {
-                    await doc.ref.update({ reminderSent: true });
-                    console.log(`✅ Succès pour ${data.email}`);
-                }
+                await doc.ref.update({ reminderSent: true });
             }
         }
     } catch (error) {
