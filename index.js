@@ -59,35 +59,30 @@ async function cleanupOldAppointments() {
 async function sendReminders() {
     const now = new Date();
     
-    // --- LOGIQUE POUR LE TEST : ON CIBLE DEMAIN ---
+    // On calcule la date de DEMAIN pour le test
     const tomorrow = new Date(now);
-    tomorrow.setDate(now.getDate() + 1); // On ajoute +1 jour à la date actuelle
-
-    const targetDay = new Intl.DateTimeFormat("en-CA", {
+    tomorrow.setDate(now.getDate() + 1);
+    const dateDemain = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Europe/Paris",
         year: "numeric", month: "2-digit", day: "2-digit",
     }).format(tomorrow);
 
-    console.log(`--- DÉBUT TEST RAPPEL DEMAIN ---`);
-    console.log(`Date cible (Demain Paris) : [${targetDay}]`);
+    console.log(`🧪 TEST : Recherche des RDV pour demain [${dateDemain}]...`);
 
     try {
-        // On cherche les RDV de demain qui n'ont pas encore reçu de rappel
         const snapshot = await db.collection("appointments")
-            .where("date", "==", targetDay)
+            .where("date", "==", dateDemain)
             .where("reminderSent", "==", false)
             .get();
 
         if (snapshot.empty) {
-            console.log(`❌ Aucun RDV trouvé pour demain (${targetDay}) avec reminderSent: false`);
+            console.log("❌ Plus aucun RDV en attente de rappel pour demain.");
             return;
         }
 
-        console.log(`🔍 ${snapshot.size} rendez-vous trouvé(s) pour demain.`);
-
         for (const doc of snapshot.docs) {
             const data = doc.data();
-            console.log(`🔔 Envoi du rappel à : ${data.clientName} pour son RDV de demain à ${data.time}`);
+            console.log(`🚀 MATCH ! Envoi du rappel à ${data.clientName}`);
 
             const response = await fetch("https://api.brevo.com/v3/smtp/email", {
                 method: "POST",
@@ -100,27 +95,19 @@ async function sendReminders() {
                     sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
                     to: [{ email: data.email, name: data.clientName }],
                     subject: "🔔 Rappel : Votre rendez-vous de demain - YM Coiffure",
-                    htmlContent: `
-                        <div style="font-family:sans-serif;padding:20px;border:1px solid #eee;border-radius:12px;text-align:center;">
-                            <h2 style="color:#000;">À demain ! ✂️</h2>
-                            <p>Bonjour <b>${data.clientName}</b>,</p>
-                            <p>Petit rappel pour votre rendez-vous de demain à : <b>${data.time}</b></p>
-                            <p>📍 58 rue Abbé Prévost, Clermont-Ferrand</p>
-                            <p style="font-size:12px; color:#888;">Merci de prévenir en cas de retard.</p>
-                        </div>`
+                    htmlContent: `<h3>Bonjour ${data.clientName}, rappel pour votre RDV de demain à ${data.time} !</h3>`
                 })
             });
 
             if (response.ok) {
                 await doc.ref.update({ reminderSent: true });
-                console.log(`✅ Rappel envoyé avec succès à ${data.email}`);
+                console.log(`✅ Mail envoyé avec succès à ${data.email} !`);
             } else {
-                const err = await response.json();
-                console.error("❌ Erreur Brevo :", err);
+                console.error("❌ Erreur Brevo");
             }
         }
     } catch (error) {
-        console.error("❌ Erreur technique :", error);
+        console.error("❌ Erreur:", error);
     }
 }
 
