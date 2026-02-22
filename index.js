@@ -57,62 +57,67 @@ async function cleanupOldAppointments() {
  * Envoie un mail de rappel (Configuré ici pour test à 3min)
  */
 async function sendReminders() {
-    console.log("⏳ Vérification des rappels en cours...");
     const now = new Date();
     
-    // On récupère la date d'aujourd'hui au format YYYY-MM-DD (Heure de Paris)
+    // On force la date au format YYYY-MM-DD en heure de Paris
     const todayParis = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Europe/Paris",
         year: "numeric", month: "2-digit", day: "2-digit",
     }).format(now);
 
+    console.log(`--- DÉBUT VÉRIFICATION ---`);
+    console.log(`Heure serveur : ${now.toISOString()}`);
+    console.log(`Date calculée (Paris) : [${todayParis}]`);
+
     try {
-        // On cherche tous les RDV d'aujourd'hui qui n'ont pas encore reçu de rappel
+        // On récupère TOUS les rendez-vous qui n'ont pas encore de rappel
         const snapshot = await db.collection("appointments")
-            .where("date", "==", todayParis)
             .where("reminderSent", "==", false)
             .get();
 
         if (snapshot.empty) {
-            console.log("--- Aucun rappel à envoyer pour le moment ---");
+            console.log("❌ Aucun RDV avec reminderSent: false dans toute la base.");
             return;
         }
 
+        console.log(`🔍 Nombre de RDV en attente de rappel : ${snapshot.size}`);
+
         for (const doc of snapshot.docs) {
             const data = doc.data();
-            console.log(`📧 Tentative d'envoi pour : ${data.clientName} (${data.email})`);
+            console.log(`📋 Analyse RDV : Nom: ${data.clientName} | Date en base: [${data.date}] | Heure: ${data.time}`);
 
-            const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-                method: "POST",
-                headers: {
-                    "accept": "application/json",
-                    "api-key": process.env.MAIL_PASS,
-                    "content-type": "application/json"
-                },
-                body: JSON.stringify({
-                    sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
-                    to: [{ email: data.email, name: data.clientName }],
-                    subject: "🔔 Rappel : Votre rendez-vous chez YM Coiffure",
-                    htmlContent: `
-                        <div style="font-family:sans-serif;padding:20px;border:1px solid #eee;border-radius:12px;text-align:center;">
-                            <h2>Petit rappel ✂️</h2>
-                            <p>Bonjour <b>${data.clientName}</b>,</p>
-                            <p>Votre rendez-vous est prévu aujourd'hui à : <b>${data.time}</b></p>
-                            <p>📍 58 rue Abbé Prévost, Clermont-Ferrand</p>
-                        </div>`
-                })
-            });
+            // COMPARAISON DE LA DATE
+            if (data.date === todayParis) {
+                console.log(`✅ MATCH trouvé pour ${data.clientName} ! Envoi du mail...`);
 
-            if (response.ok) {
-                await doc.ref.update({ reminderSent: true });
-                console.log(`✅ Rappel envoyé avec succès à : ${data.email}`);
+                const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+                    method: "POST",
+                    headers: {
+                        "accept": "application/json",
+                        "api-key": process.env.MAIL_PASS,
+                        "content-type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
+                        to: [{ email: data.email, name: data.clientName }],
+                        subject: "🔔 Rappel : Votre rendez-vous chez YM Coiffure",
+                        htmlContent: `<h3>Bonjour ${data.clientName}, c'est l'heure !</h3>`
+                    })
+                });
+
+                if (response.ok) {
+                    await doc.ref.update({ reminderSent: true });
+                    console.log(`🚀 Succès : Mail envoyé à ${data.email}`);
+                } else {
+                    const errorDetails = await response.json();
+                    console.error("❌ Erreur Brevo :", JSON.stringify(errorDetails));
+                }
             } else {
-                const err = await response.json();
-                console.error("❌ Erreur Brevo détaillée :", err);
+                console.log(`⏳ Le RDV de ${data.clientName} est pour le ${data.date}, on attend.`);
             }
         }
     } catch (error) {
-        console.error("❌ Erreur lors de la boucle de rappel :", error);
+        console.error("❌ Erreur technique dans la boucle :", error);
     }
 }
 
