@@ -61,7 +61,7 @@ async function sendReminders() {
     const now = new Date();
     
     // TEST : Cible dans 3 minutes (À remettre à 6*60*60*1000 pour 6h après tes tests)
-    const targetDate = new Date(now.getTime() + (3 * 60 * 1000));
+    const targetDate = new Date(now.getTime() + (1 * 60 * 1000));
     const targetDay = targetDate.toISOString().split('T')[0];
     const targetHour = targetDate.getHours().toString().padStart(2, '0');
 
@@ -109,7 +109,7 @@ async function sendReminders() {
 setInterval(() => {
     sendReminders();
     cleanupOldAppointments();
-}, 30000);
+}, 10000);
 
 // =======================================================
 // 3. ROUTES API (Vérification & Réservation)
