@@ -126,6 +126,15 @@ app.post("/api/verify-request", async (req, res) => {
     if (!email || !date || !time || !clientName || !phone) return res.status(400).json({ success: false });
 
     try {
+        // --- VÉRIFICATION BLACKLIST ---
+        const blockedDoc = await db.collection("blacklist").doc(email).get();
+        if (blockedDoc.exists) {
+            return res.json({ 
+                success: false, 
+                message: "Les réservations sont indisponibles pour ce compte." 
+            });
+        }
+
         const otp = Math.floor(1000 + Math.random() * 9000).toString();
         await db.collection("temp_verifications").doc(email).set({ otp, clientName, date, time, phone, createdAt: new Date() });
 
@@ -175,7 +184,7 @@ app.post("/api/verify-confirm", async (req, res) => {
         });
 
         await db.collection("appointments").add({
-            ...data, calendarEventId: gEvent.data.id, reminderSent: false, createdAt: new Date()
+            ...data, email: email, calendarEventId: gEvent.data.id, reminderSent: false, createdAt: new Date()
         });
 
         await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -209,7 +218,53 @@ app.post("/api/verify-confirm", async (req, res) => {
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// --- ROUTES ADMIN & STATUT (Gardées telles quelles) ---
+// --- ROUTES ADMIN ---
+
+const checkAuth = (req, res, next) => {
+    if (req.headers['x-admin-key'] === ADMIN_KEY) return next();
+    res.status(401).json({ error: "Refusé" });
+};
+
+app.get("/api/admin/appointments", checkAuth, async (req, res) => {
+    try {
+        const snapshot = await db.collection("appointments").orderBy("date", "desc").get();
+        // On renvoie bien toutes les données, dont l'email
+        res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    } catch (e) { res.status(500).json({ error: "Erreur lecture" }); }
+});
+
+// ROUTE POUR BLOQUER UN EMAIL
+app.post("/api/admin/block-email", checkAuth, async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email manquant" });
+    try {
+        await db.collection("blacklist").doc(email).set({ 
+            blockedAt: new Date(),
+            reason: "Manuel"
+        });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: "Erreur blacklist" }); }
+});
+
+app.delete("/api/admin/appointment/:id", checkAuth, async (req, res) => {
+    try {
+        const doc = await db.collection("appointments").doc(req.params.id).get();
+        if (doc.exists && doc.data().calendarEventId) {
+            await calendar.events.delete({ calendarId: CALENDAR_ID, eventId: doc.data().calendarEventId }).catch(()=>{});
+        }
+        await db.collection("appointments").doc(req.params.id).delete();
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: "Erreur" }); }
+});
+
+app.post("/api/admin/toggle-status", checkAuth, async (req, res) => {
+    const { is_open } = req.body;
+    await db.collection("settings").doc("status").set({ is_open });
+    res.json({ success: true, is_open });
+});
+
+// --- ROUTES PUBLIQUES ---
+
 app.get("/api/status", async (req, res) => {
     try {
         const doc = await db.collection("settings").doc("status").get();
@@ -222,33 +277,6 @@ app.get("/api/busy-slots", async (req, res) => {
     try {
         const snapshot = await db.collection("appointments").where("date", "==", date).get();
         res.json({ busySlots: snapshot.docs.map(doc => doc.data().time) });
-    } catch (e) { res.status(500).json({ error: "Erreur" }); }
-});
-
-const checkAuth = (req, res, next) => {
-    if (req.headers['x-admin-key'] === ADMIN_KEY) return next();
-    res.status(401).json({ error: "Refusé" });
-};
-
-app.get("/api/admin/appointments", checkAuth, async (req, res) => {
-    const snapshot = await db.collection("appointments").orderBy("date", "desc").get();
-    res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-});
-
-app.post("/api/admin/toggle-status", checkAuth, async (req, res) => {
-    const { is_open } = req.body;
-    await db.collection("settings").doc("status").set({ is_open });
-    res.json({ success: true, is_open });
-});
-
-app.delete("/api/admin/appointment/:id", checkAuth, async (req, res) => {
-    try {
-        const doc = await db.collection("appointments").doc(req.params.id).get();
-        if (doc.exists && doc.data().calendarEventId) {
-            await calendar.events.delete({ calendarId: CALENDAR_ID, eventId: doc.data().calendarEventId }).catch(()=>{});
-        }
-        await db.collection("appointments").doc(req.params.id).delete();
-        res.json({ success: true });
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
 });
 
