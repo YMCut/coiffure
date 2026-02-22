@@ -228,12 +228,19 @@ const checkAuth = (req, res, next) => {
 app.get("/api/admin/appointments", checkAuth, async (req, res) => {
     try {
         const snapshot = await db.collection("appointments").orderBy("date", "desc").get();
-        // On renvoie bien toutes les données, dont l'email
         res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     } catch (e) { res.status(500).json({ error: "Erreur lecture" }); }
 });
 
-// ROUTE POUR BLOQUER UN EMAIL
+// LISTER LA BLACKLIST
+app.get("/api/admin/blacklist", checkAuth, async (req, res) => {
+    try {
+        const snapshot = await db.collection("blacklist").get();
+        res.json(snapshot.docs.map(doc => ({ email: doc.id, ...doc.data() })));
+    } catch (e) { res.status(500).json({ error: "Erreur lecture blacklist" }); }
+});
+
+// BLOQUER UN EMAIL
 app.post("/api/admin/block-email", checkAuth, async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email manquant" });
@@ -244,6 +251,14 @@ app.post("/api/admin/block-email", checkAuth, async (req, res) => {
         });
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: "Erreur blacklist" }); }
+});
+
+// DÉBLOQUER UN EMAIL
+app.delete("/api/admin/block-email/:email", checkAuth, async (req, res) => {
+    try {
+        await db.collection("blacklist").doc(req.params.email).delete();
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: "Erreur suppression ban" }); }
 });
 
 app.delete("/api/admin/appointment/:id", checkAuth, async (req, res) => {
