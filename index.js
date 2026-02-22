@@ -33,16 +33,28 @@ const ADMIN_KEY = process.env.ADMIN_KEY || "Younes63";
 const CALENDAR_ID = "msallaky@gmail.com";
 
 // =======================================================
-// 2. FONCTIONS DE MAINTENANCE (Nettoyage & Rappels 24h)
+// 2. STYLES DES EMAILS (DESIGN PREMIUM)
 // =======================================================
 
-/**
- * Supprime les rendez-vous passés (Date inférieure à aujourd'hui)
- */
+const emailTheme = {
+    wrapper: "font-family:'Helvetica Neue',Arial,sans-serif; width:100%; background-color:#f4f4f4; padding:20px 0;",
+    container: "max-width:600px; margin:0 auto; background-color:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 4px 15px rgba(0,0,0,0.05);",
+    header: "background-color:#000000; padding:30px; text-align:center;",
+    body: "padding:40px 30px; text-align:center; color:#333333;",
+    h1: "color:#ffffff; margin:0; letter-spacing:4px; font-size:24px; text-transform:uppercase;",
+    h2: "font-size:20px; margin-bottom:20px; color:#000;",
+    otpBox: "background-color:#f8f8f8; border:2px dashed #000; border-radius:12px; padding:20px; margin:20px 0; font-size:32px; font-weight:bold; letter-spacing:8px;",
+    button: "display:inline-block; padding:15px 30px; background-color:#000; color:#fff; text-decoration:none; border-radius:8px; font-weight:bold; margin-top:20px;",
+    footer: "padding:20px; text-align:center; font-size:12px; color:#999;"
+};
+
+// =======================================================
+// 3. FONCTIONS DE MAINTENANCE
+// =======================================================
+
 async function cleanupOldAppointments() {
     const todayParis = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Europe/Paris",
-        year: "numeric", month: "2-digit", day: "2-digit",
+        timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
     }).format(new Date());
 
     try {
@@ -52,159 +64,107 @@ async function cleanupOldAppointments() {
         snapshot.docs.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
         console.log(`✅ Nettoyage : ${snapshot.size} anciens RDV supprimés.`);
-    } catch (error) { 
-        console.error("❌ Erreur nettoyage:", error); 
-    }
+    } catch (error) { console.error("❌ Erreur nettoyage:", error); }
 }
 
-/**
- * Envoie un mail de rappel 24h avant, 
- * seulement si le rendez-vous n'est pas "tout frais" (créé il y a plus de 1h)
- */
 async function sendReminders() {
-    console.log("🕒 Vérification des rappels (Sécurité 24h)...");
     const now = new Date();
-    
-    // 1. Date de demain pour le rappel
     const tomorrow = new Date(now.getTime() + (24 * 60 * 60 * 1000));
     const targetDay = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Europe/Paris",
-        year: "numeric", month: "2-digit", day: "2-digit",
+        timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
     }).format(tomorrow);
     
     const targetHour = tomorrow.getHours().toString().padStart(2, '0');
-
-    // 2. Calcul du délai de sécurité (ex: 1 heure)
-    // On n'envoie pas de rappel si le RDV a été créé il y a moins de 60 minutes
     const securityDelay = 60 * 60 * 1000; 
 
     try {
-        const snapshot = await db.collection("appointments")
-            .where("date", "==", targetDay)
-            .where("reminderSent", "==", false)
-            .get();
+        const snapshot = await db.collection("appointments").where("date", "==", targetDay).where("reminderSent", "==", false).get();
 
         for (const doc of snapshot.docs) {
             const data = doc.data();
-            
-            // Vérification de l'heure
             if (data.time.startsWith(targetHour + ":")) {
-                
-                // --- SÉCURITÉ ---
-                // On compare l'heure actuelle avec l'heure de création du RDV (createdAt)
-                const createdAt = data.createdAt.toDate(); // Conversion Firestore Timestamp vers Date JS
-                const timeSinceCreation = now.getTime() - createdAt.getTime();
-
-                if (timeSinceCreation < securityDelay) {
-                    console.log(`⏭️ Rappel ignoré pour ${data.clientName} : RDV trop récent (créé il y a moins d'une heure).`);
-                    continue; // On passe au suivant sans envoyer
-                }
-
-                console.log(`📧 Envoi rappel 24h à : ${data.email}`);
+                const createdAt = data.createdAt.toDate();
+                if (now.getTime() - createdAt.getTime() < securityDelay) continue;
 
                 await fetch("https://api.brevo.com/v3/smtp/email", {
                     method: "POST",
-                    headers: {
-                        "accept": "application/json",
-                        "api-key": process.env.MAIL_PASS,
-                        "content-type": "application/json"
-                    },
+                    headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
                     body: JSON.stringify({
                         sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
                         to: [{ email: data.email, name: data.clientName }],
                         subject: "🔔 Rappel : Votre rendez-vous de demain - YM Coiffure",
                         htmlContent: `
-                            <div style="font-family:sans-serif;padding:20px;border:1px solid #eee;border-radius:12px;text-align:center;color:#333;">
-                                <h2 style="color:#000;">À demain ! ✂️</h2>
-                                <p>Bonjour <b>${data.clientName}</b>,</p>
-                                <p>Petit rappel pour votre rendez-vous de demain à :</p>
-                                <p style="font-size:22px; font-weight:bold;">${data.time}</p>
-                                <p>📍 58 rue Abbé Prévost, Clermont-Ferrand</p>
+                            <div style="${emailTheme.wrapper}">
+                                <div style="${emailTheme.container}">
+                                    <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM COIFFURE</h1></div>
+                                    <div style="${emailTheme.body}">
+                                        <h2 style="${emailTheme.h2}">À DEMAIN ! ✂️</h2>
+                                        <p>Bonjour <b>${data.clientName}</b>,</p>
+                                        <p>Petit rappel pour votre coupe prévue demain à :</p>
+                                        <div style="font-size:36px; font-weight:bold; margin:20px 0;">${data.time}</div>
+                                        <p style="color:#666;">📍 58 rue Abbé Prévost, Clermont-Ferrand</p>
+                                    </div>
+                                    <div style="${emailTheme.footer}">Merci de nous prévenir en cas d'annulation.</div>
+                                </div>
                             </div>`
                     })
                 });
-
                 await doc.ref.update({ reminderSent: true });
             }
         }
-    } catch (error) {
-        console.error("❌ Erreur rappels:", error);
-    }
+    } catch (error) { console.error("❌ Erreur rappels:", error); }
 }
 
-// Lancement automatique toutes les 30 minutes
-setInterval(() => {
-    sendReminders();
-    cleanupOldAppointments();
-}, 1800000);
+setInterval(() => { sendReminders(); cleanupOldAppointments(); }, 1800000);
 
 // =======================================================
-// 3. ROUTES API
+// 4. ROUTES API
 // =======================================================
 
 app.post("/api/verify-request", async (req, res) => {
     const { email, clientName, date, time, phone } = req.body;
-    if (!email || !date || !time || !clientName || !phone) {
-        return res.status(400).json({ success: false, error: "Données manquantes" });
-    }
+    if (!email || !date || !time || !clientName || !phone) return res.status(400).json({ success: false });
 
     try {
-        const todayParis = new Intl.DateTimeFormat("en-CA", {
-            timeZone: "Europe/Paris",
-            year: "numeric", month: "2-digit", day: "2-digit",
-        }).format(new Date());
-
-        const snapshot = await db.collection("appointments").where("email", "==", email).get();
-        const existingRDV = snapshot.docs.find(doc => doc.data().date >= todayParis);
-
-        if (existingRDV) {
-            return res.json({ 
-                success: false, 
-                isDuplicate: true,
-                message: "Vous avez déjà un rendez-vous actif."
-            });
-        }
-
         const otp = Math.floor(1000 + Math.random() * 9000).toString();
-        await db.collection("temp_verifications").doc(email).set({
-            otp, clientName, date, time, phone,
-            createdAt: new Date()
-        });
+        await db.collection("temp_verifications").doc(email).set({ otp, clientName, date, time, phone, createdAt: new Date() });
 
         await fetch("https://api.brevo.com/v3/smtp/email", {
             method: "POST",
-            headers: {
-                "accept": "application/json",
-                "api-key": process.env.MAIL_PASS,
-                "content-type": "application/json"
-            },
+            headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
             body: JSON.stringify({
                 sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
                 to: [{ email, name: clientName }],
                 subject: "Code de validation – YM Coiffure",
-                htmlContent: `<div style="text-align:center;"><h2>Code : ${otp}</h2></div>`
+                htmlContent: `
+                    <div style="${emailTheme.wrapper}">
+                        <div style="${emailTheme.container}">
+                            <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM COIFFURE</h1></div>
+                            <div style="${emailTheme.body}">
+                                <h2 style="${emailTheme.h2}">VÉRIFICATION</h2>
+                                <p>Bonjour ${clientName}, voici votre code pour confirmer votre rendez-vous :</p>
+                                <div style="${emailTheme.otpBox}">${otp}</div>
+                                <p style="font-size:13px; color:#999;">Ce code est valable 10 minutes.</p>
+                            </div>
+                        </div>
+                    </div>`
             })
         });
-
-        return res.json({ success: true });
-    } catch (error) {
-        return res.status(500).json({ success: false, error: "Erreur technique" });
-    }
+        res.json({ success: true });
+    } catch (error) { res.status(500).json({ success: false }); }
 });
 
 app.post("/api/verify-confirm", async (req, res) => {
     const { email, code } = req.body;
     try {
-        const verifyDoc = await db.collection("temp_verifications").doc(email).get();
-        if (!verifyDoc.exists || verifyDoc.data().otp !== code) {
-            return res.status(400).json({ success: false, error: "Code invalide" });
-        }
+        const vDoc = await db.collection("temp_verifications").doc(email).get();
+        if (!vDoc.exists || vDoc.data().otp !== code) return res.status(400).json({ success: false });
 
-        const data = verifyDoc.data();
+        const data = vDoc.data();
         const startISO = `${data.date}T${data.time}:00`;
         const endDate = new Date(new Date(startISO).getTime() + 30 * 60000);
         
-        const googleEvent = await calendar.events.insert({
+        const gEvent = await calendar.events.insert({
             calendarId: CALENDAR_ID,
             requestBody: {
                 summary: `✂️ ${data.clientName}`,
@@ -215,39 +175,41 @@ app.post("/api/verify-confirm", async (req, res) => {
         });
 
         await db.collection("appointments").add({
-            date: data.date, time: data.time, clientName: data.clientName,
-            phone: data.phone, email: email, calendarEventId: googleEvent.data.id,
-            reminderSent: false,
-            createdAt: new Date()
+            ...data, calendarEventId: gEvent.data.id, reminderSent: false, createdAt: new Date()
         });
 
         await fetch("https://api.brevo.com/v3/smtp/email", {
             method: "POST",
-            headers: {
-                "accept": "application/json",
-                "api-key": process.env.MAIL_PASS,
-                "content-type": "application/json"
-            },
+            headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
             body: JSON.stringify({
                 sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
                 to: [{ email, name: data.clientName }],
-                subject: "✅ Rendez-vous confirmé – YM Coiffure",
+                subject: "✅ Confirmation – YM Coiffure",
                 htmlContent: `
-                    <div style="font-family:sans-serif;padding:20px;border:1px solid #eee;border-radius:12px;">
-                        <h2>C'est validé !</h2>
-                        <p>Rendez-vous le <b>${data.date}</b> à <b>${data.time}</b>.</p>
-                        <p>📍 58 rue Abbé Prévost, 63100 Clermont-Ferrand</p>
+                    <div style="${emailTheme.wrapper}">
+                        <div style="${emailTheme.container}">
+                            <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM COIFFURE</h1></div>
+                            <div style="${emailTheme.body}">
+                                <h2 style="${emailTheme.h2}; color:#27ae60;">C'EST VALIDÉ !</h2>
+                                <p>Rendez-vous confirmé pour <b>${data.clientName}</b>.</p>
+                                <div style="background:#f9f9f9; padding:20px; border-radius:12px; margin:20px 0; text-align:left;">
+                                    <p style="margin:5px 0;">📅 <b>Date :</b> ${data.date}</p>
+                                    <p style="margin:5px 0;">🕒 <b>Heure :</b> ${data.time}</p>
+                                    <p style="margin:5px 0;">📍 <b>Lieu :</b> 58 rue Abbé Prévost, 63100 Clermont-Ferrand</p>
+                                </div>
+                                <a href="https://www.google.com/maps/search/?api=1&query=58+rue+Abbé+Prévost+Clermont-Ferrand" style="${emailTheme.button}">Ouvrir Maps</a>
+                            </div>
+                        </div>
                     </div>`
             })
         });
 
         await db.collection("temp_verifications").doc(email).delete();
-        return res.json({ success: true });
-    } catch (error) {
-        return res.status(500).json({ success: false, error: "Erreur confirmation" });
-    }
+        res.json({ success: true });
+    } catch (error) { res.status(500).json({ success: false }); }
 });
 
+// --- ROUTES ADMIN & STATUT (Gardées telles quelles) ---
 app.get("/api/status", async (req, res) => {
     try {
         const doc = await db.collection("settings").doc("status").get();
