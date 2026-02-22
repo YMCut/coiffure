@@ -176,7 +176,55 @@ app.post("/api/verify-confirm", async (req, res) => {
             calendarEventId: googleEvent.data.id,
             createdAt: new Date()
         });
+        
+        // 📧 Mail de confirmation du rendez-vous
+        const confirmationResponse = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+            accept: "application/json",
+            "api-key": process.env.MAIL_PASS,
+            "content-type": "application/json"
+        },
+        body: JSON.stringify({
+            sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
+            to: [{ email, name: data.clientName }],
+            subject: "✅ Rendez-vous confirmé – YM Coiffure",
+            htmlContent: `
+            <div style="font-family:sans-serif;padding:20px;max-width:500px;margin:auto;border:1px solid #eee;border-radius:12px">
+                <h2 style="text-align:center;margin-bottom:20px">✂️ YM COIFFURE</h2>
 
+                <p>Bonjour <b>${data.clientName}</b>,</p>
+
+                <p>
+                Votre rendez-vous est <b>confirmé</b> :
+                </p>
+
+                <ul style="list-style:none;padding:0;font-size:15px">
+                <li>📅 <b>Date :</b> ${data.date}</li>
+                <li>⏰ <b>Heure :</b> ${data.time}</li>
+                <li>📍 <b>Adresse :</b><br>
+                    58 rue Abbé Prévost<br>
+                    63100 Clermont-Ferrand
+                </li>
+                </ul>
+
+                <p style="margin-top:20px;text-align:center">
+                👉 <a href="https://maps.app.goo.gl/THwG1wEeNPDKNmep9"
+                    style="background:#000;color:#fff;padding:10px 16px;
+                            border-radius:8px;text-decoration:none;font-weight:bold"
+                    target="_blank">
+                    Voir sur Google Maps
+                </a>
+                </p>
+
+                <p style="margin-top:30px;font-size:13px;color:#666;text-align:center">
+                Merci de vous présenter à l’heure.<br>
+                À très bientôt ✂️
+                </p>
+            </div>
+            `
+        })
+        });
         // 3. Suppression de la vérification temporaire
         await db.collection("temp_verifications").doc(email).delete();
         
@@ -238,4 +286,5 @@ app.delete("/api/admin/appointment/:id", checkAuth, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => console.log(`🚀 Serveur YM opérationnel sur le port ${PORT}`));
