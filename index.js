@@ -61,7 +61,7 @@ async function sendReminders() {
     const now = new Date();
     
     // Calcul de l'heure cible (Maintenant + 6h)
-    const targetDate = new Date(now.getTime() + (6 * 60 * 60 * 1000));
+    const targetDate = new Date(now.getTime() + (3 * 60 * 1000));
     const targetDay = targetDate.toISOString().split('T')[0];
     const targetHour = targetDate.getHours().toString().padStart(2, '0');
 
@@ -112,7 +112,7 @@ async function sendReminders() {
 setInterval(() => {
     sendReminders();
     cleanupOldAppointments();
-}, 3600000);
+}, 30000);
 
 // Exécution immédiate au démarrage du serveur
 sendReminders();
