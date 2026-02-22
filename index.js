@@ -37,128 +37,93 @@ const CALENDAR_ID = "msallaky@gmail.com";
 // =======================================================
 
 async function cleanupOldAppointments() {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const limitDateString = sevenDaysAgo.toISOString().split('T')[0]; 
+    const today = new Date().toISOString().split('T')[0]; 
     try {
-        const snapshot = await db.collection("appointments").where("date", "<=", limitDateString).get();
+        const snapshot = await db.collection("appointments").where("date", "<", today).get();
         if (snapshot.empty) return;
         const batch = db.batch();
         snapshot.docs.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
-    } catch (error) { console.error("❌ Erreur nettoyage:", error); }
+        console.log(`✅ Nettoyage : ${snapshot.size} anciens RDV supprimés.`);
+    } catch (error) { 
+        console.error("❌ Erreur nettoyage:", error); 
+    }
 }
 cleanupOldAppointments();
 
 // =======================================================
-// 3. LOGIQUE DE VÉRIFICATION PAR MAIL (VIA FETCH API)
+// 3. LOGIQUE DE VÉRIFICATION ET ENVOI OTP
 // =======================================================
 
-function todayParisYYYYMMDD() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Paris",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-
-  const y = parts.find(p => p.type === "year").value;
-  const m = parts.find(p => p.type === "month").value;
-  const d = parts.find(p => p.type === "day").value;
-  return `${y}-${m}-${d}`; // YYYY-MM-DD
-}
-
 app.post("/api/verify-request", async (req, res) => {
-  const { email, clientName, date, time, phone } = req.body;
-  if (!email || !date || !time) {
-    return res.status(400).json({ error: "Données manquantes" });
-  }
+    const { email, clientName, date, time, phone } = req.body;
+    if (!email || !date || !time) return res.status(400).json({ error: "Données manquantes" });
 
-  try {
-    /* =================================================
-       🔒 VÉRIFICATION RDV EXISTANT (AJOUT MINIMAL)
-    ================================================= */
+    try {
+        // 1. VÉRIFICATION DOUBLON (PROPRE)
+        const todayParis = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Europe/Paris",
+            year: "numeric", month: "2-digit", day: "2-digit",
+        }).format(new Date());
 
-    // date du jour (Europe/Paris) au format YYYY-MM-DD
-    const today = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Europe/Paris",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+        const snapshot = await db.collection("appointments").where("email", "==", email).get();
+        const existingRDV = snapshot.docs.find(doc => doc.data().date >= todayParis);
 
-    // on récupère tous les RDV de cet email (requête SIMPLE)
-    const snapshot = await db
-      .collection("appointments")
-      .where("email", "==", email)
-      .get();
+        if (existingRDV) {
+            const rdv = existingRDV.data();
+            return res.json({ 
+                success: false, 
+                isDuplicate: true,
+                message: `Vous avez déjà un rendez-vous prévu le ${rdv.date} à ${rdv.time}.`,
+                suggestion: "Merci d'honorer ce créneau avant d'en réserver un nouveau."
+            });
+        }
 
-    const hasFutureAppointment = snapshot.docs.some(doc => {
-      const rdvDate = doc.data().date;
-      return rdvDate >= today;
-    });
+        // 2. GÉNÉRATION OTP
+        const otp = Math.floor(1000 + Math.random() * 9000).toString();
+        await db.collection("temp_verifications").doc(email).set({
+            otp, clientName, date, time, phone,
+            createdAt: new Date()
+        });
 
-    if (hasFutureAppointment) {
-      return res.status(409).json({
-        error: "Vous avez déjà un rendez-vous à venir. Merci d’attendre de l’avoir effectué avant d’en reprendre un."
-      });
+        // 3. ENVOI VIA BREVO (FETCH API)
+        const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+            method: "POST",
+            headers: {
+                "accept": "application/json",
+                "api-key": process.env.MAIL_PASS,
+                "content-type": "application/json"
+            },
+            body: JSON.stringify({
+                sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
+                to: [{ email: email, name: clientName }],
+                subject: "Confirmation de rendez-vous – YM Coiffure",
+                htmlContent: `
+                    <div style="font-family: sans-serif; text-align: center; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                        <h2 style="color: #333;">YM COIFFURE</h2>
+                        <p>Bonjour <b>${clientName}</b>,</p>
+                        <p>Voici votre code pour confirmer votre rendez-vous du ${date} à ${time} :</p>
+                        <h1 style="background: #000; color: #fff; padding: 15px; letter-spacing: 10px; display: inline-block;">${otp}</h1>
+                        <p style="font-size: 12px; color: #888; margin-top: 20px;">Ce code expire dans 15 minutes.</p>
+                    </div>`
+            })
+        });
+
+        if (!response.ok) throw new Error("Erreur lors de l'appel à l'API Brevo");
+
+        console.log(`✅ Code OTP envoyé à ${email}`);
+        return res.json({ success: true, message: "Code envoyé !" });
+
+    } catch (error) {
+        console.error("❌ Erreur verify-request:", error);
+        return res.status(500).json({ error: "Erreur technique, merci de réessayer." });
     }
-
-    /* =================================================
-       ✅ LOGIQUE D’ORIGINE (INCHANGÉE)
-    ================================================= */
-
-    const otp = Math.floor(1000 + Math.random() * 9000).toString();
-
-    await db.collection("temp_verifications").doc(email).set({
-      otp,
-      clientName,
-      date,
-      time,
-      phone,
-      createdAt: new Date()
-    });
-
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "api-key": process.env.MAIL_PASS,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
-        to: [{ email, name: clientName }],
-        subject: "Confirmation de rendez-vous – YM Coiffure",
-        htmlContent: `
-          <div style="font-family:sans-serif;text-align:center;padding:20px">
-            <h2>YM COIFFURE</h2>
-            <p>Bonjour <b>${clientName}</b>,</p>
-            <p>Votre code pour le rendez-vous du ${date} à ${time} :</p>
-            <h1 style="background:#000;color:#fff;padding:10px;letter-spacing:8px">${otp}</h1>
-            <p style="font-size:12px;color:#888">Code valable 15 minutes</p>
-          </div>
-        `
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(JSON.stringify(errorData));
-    }
-
-    console.log(`✅ Code OTP envoyé à ${email}`);
-    return res.json({ success: true });
-
-  } catch (error) {
-    console.error("❌ Erreur verify-request:", error);
-    return res.status(500).json({
-      error: "Erreur technique, merci de réessayer."
-    });
-  }
 });
 
-// ÉTAPE 2 : Valider le code et créer le RDV
+// =======================================================
+// 4. CONFIRMATION FINALE DU RDV
+// =======================================================
+
 app.post("/api/verify-confirm", async (req, res) => {
     const { email, code } = req.body;
     try {
@@ -166,10 +131,12 @@ app.post("/api/verify-confirm", async (req, res) => {
         if (!verifyDoc.exists || verifyDoc.data().otp !== code) {
             return res.status(400).json({ error: "Code invalide ou expiré" });
         }
+
         const data = verifyDoc.data();
         const startISO = `${data.date}T${data.time}:00`;
         const endDate = new Date(new Date(startISO).getTime() + 30 * 60000);
         
+        // Ajout Google Calendar
         const googleEvent = await calendar.events.insert({
             calendarId: CALENDAR_ID,
             requestBody: {
@@ -180,6 +147,7 @@ app.post("/api/verify-confirm", async (req, res) => {
             },
         });
 
+        // Sauvegarde Firestore
         await db.collection("appointments").add({
             date: data.date, time: data.time, clientName: data.clientName,
             phone: data.phone, email: email, calendarEventId: googleEvent.data.id,
@@ -188,14 +156,15 @@ app.post("/api/verify-confirm", async (req, res) => {
 
         await db.collection("temp_verifications").doc(email).delete();
         return res.json({ success: true, message: "Rendez-vous confirmé !" });
+
     } catch (error) {
         console.error("❌ Erreur confirmation:", error);
-        return res.status(500).json({ error: "Erreur lors de la confirmation finale." });
+        return res.status(500).json({ error: "Impossible de finaliser le rendez-vous." });
     }
 });
 
 // =======================================================
-// 4. ROUTES PUBLIQUES (Disponibilités)
+// 5. ROUTES PUBLIQUES & ADMIN
 // =======================================================
 
 app.get("/api/status", async (req, res) => {
@@ -210,14 +179,9 @@ app.get("/api/busy-slots", async (req, res) => {
     if (!date) return res.status(400).json({ error: "Date manquante" });
     try {
         const snapshot = await db.collection("appointments").where("date", "==", date).get();
-        const busySlots = snapshot.docs.map(doc => doc.data().time);
-        res.json({ busySlots });
+        res.json({ busySlots: snapshot.docs.map(doc => doc.data().time) });
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
 });
-
-// =======================================================
-// 5. ROUTES ADMIN
-// =======================================================
 
 const checkAuth = (req, res, next) => {
     if (req.headers['x-admin-key'] === ADMIN_KEY) return next();
@@ -247,5 +211,4 @@ app.delete("/api/admin/appointment/:id", checkAuth, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => console.log(`🚀 Serveur YM actif sur le port ${PORT}`));
