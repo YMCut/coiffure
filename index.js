@@ -224,6 +224,44 @@ const checkAuth = (req, res, next) => {
     res.status(401).json({ error: "Refusé" });
 };
 
+// CRÉER UN RENDEZ-VOUS EN DIRECT (POUR LE BLOCAGE MANUEL)
+app.post("/api/appointments", async (req, res) => {
+    const { clientName, email, phone, date, time } = req.body;
+    
+    try {
+        // 1. Création dans Google Calendar
+        const startISO = `${date}T${time}:00`;
+        const endDate = new Date(new Date(startISO).getTime() + 30 * 60000);
+        
+        const gEvent = await calendar.events.insert({
+            calendarId: CALENDAR_ID,
+            requestBody: {
+                summary: clientName, // "⛔ INDISPONIBLE"
+                description: `Blocage Admin - ${phone}`,
+                start: { dateTime: startISO, timeZone: "Europe/Paris" },
+                end: { dateTime: endDate.toISOString().split('.')[0], timeZone: "Europe/Paris" },
+            },
+        });
+
+        // 2. Enregistrement en base de données
+        await db.collection("appointments").add({
+            clientName,
+            email,
+            phone,
+            date,
+            time,
+            calendarEventId: gEvent.data.id,
+            reminderSent: true, // Pas besoin de rappel pour un blocage
+            createdAt: new Date()
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Erreur lors du blocage manuel:", error);
+        res.status(500).json({ success: false });
+    }
+});
+
 app.get("/api/admin/appointments", checkAuth, async (req, res) => {
     try {
         const snapshot = await db.collection("appointments").orderBy("date", "desc").get();
