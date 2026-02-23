@@ -244,59 +244,44 @@ const checkAuth = (req, res, next) => {
     res.status(401).json({ error: "Refusé" });
 };
 
-app.post("/api/appointments", async (req, res) => {
-    const { clientName, email, phone, date, time, dateEnd, timeEnd } = req.body;
-    
-    try {
-        const slotsToBlock = [];
-        
-        // Si c'est un blocage sur une seule journée
-        if (!dateEnd || dateEnd === date) {
-            let current = new Date(`${date}T${time}:00`);
-            const end = new Date(`${date}T${timeEnd}:00`);
+app.post("/api/appointments", checkAuth, async (req, res) => {
+    const { clientName, date, time, timeEnd } = req.body;
 
-            // On boucle de 30min en 30min pour créer chaque créneau dans Firestore
-            while (current < end) {
-                const currentTimeStr = current.toTimeString().substring(0, 5);
-                slotsToBlock.push({
-                    clientName: clientName, // "⛔ INDISPONIBLE"
-                    email: email,
-                    phone: phone,
-                    date: date,
-                    time: currentTimeStr,
-                    isBlock: true,
-                    reminderSent: true,
-                    createdAt: new Date()
-                });
-                current.setMinutes(current.getMinutes() + 30);
-            }
-        } else {
-            // Si c'est sur plusieurs jours, on enregistre au moins le premier créneau 
-            // (Note: pour des vacances entières, la logique busy-slots devrait être adaptée)
-            slotsToBlock.push({
-                clientName: clientName,
-                email: email,
-                phone: phone,
-                date: date,
-                time: time,
-                isBlock: true,
-                reminderSent: true,
-                createdAt: new Date()
-            });
+    try {
+        let current = new Date(`${date}T${time}:00`);
+        const end = new Date(`${date}T${timeEnd}:00`);
+
+        if (end <= current) {
+            return res.status(400).json({ error: "L'heure de fin doit être après l'heure de début" });
         }
 
-        // Enregistrement groupé dans Firestore
         const batch = db.batch();
-        slotsToBlock.forEach(slot => {
-            const docRef = db.collection("appointments").doc();
-            batch.set(docRef, slot);
-        });
-        await batch.commit();
+        let count = 0;
 
-        res.json({ success: true, message: `${slotsToBlock.length} créneaux bloqués.` });
+        while (current < end) {
+            const timeStr = current.toTimeString().substring(0, 5);
+            const docRef = db.collection("appointments").doc(); // Crée un ID unique automatique
+            
+            batch.set(docRef, {
+                clientName: clientName || "⛔ INDISPONIBLE",
+                date: date,
+                time: timeStr,
+                email: "admin@ym.fr",
+                phone: "0000000000",
+                reminderSent: true,
+                isBlock: true,
+                createdAt: new Date()
+            });
+
+            count++;
+            current.setMinutes(current.getMinutes() + 30);
+        }
+
+        await batch.commit();
+        res.json({ success: true, message: `${count} créneaux bloqués.` });
     } catch (error) {
-        console.error("Erreur blocage manuel:", error);
-        res.status(500).json({ success: false });
+        console.error(error);
+        res.status(500).json({ error: "Erreur serveur" });
     }
 });
 
