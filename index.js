@@ -244,40 +244,58 @@ const checkAuth = (req, res, next) => {
     res.status(401).json({ error: "Refusé" });
 };
 
-// CRÉER UN RENDEZ-VOUS EN DIRECT (POUR LE BLOCAGE MANUEL)
 app.post("/api/appointments", async (req, res) => {
-    const { clientName, email, phone, date, time } = req.body;
+    const { clientName, email, phone, date, time, dateEnd, timeEnd } = req.body;
     
     try {
-        // 1. Création dans Google Calendar
-        const startISO = `${date}T${time}:00`;
-        const endDate = new Date(new Date(startISO).getTime() + 30 * 60000);
+        const slotsToBlock = [];
         
-        const gEvent = await calendar.events.insert({
-            calendarId: CALENDAR_ID,
-            requestBody: {
-                summary: clientName, // "⛔ INDISPONIBLE"
-                description: `Blocage Admin - ${phone}`,
-                start: { dateTime: startISO, timeZone: "Europe/Paris" },
-                end: { dateTime: endDate.toISOString().split('.')[0], timeZone: "Europe/Paris" },
-            },
-        });
+        // Si c'est un blocage sur une seule journée
+        if (!dateEnd || dateEnd === date) {
+            let current = new Date(`${date}T${time}:00`);
+            const end = new Date(`${date}T${timeEnd}:00`);
 
-        // 2. Enregistrement en base de données
-        await db.collection("appointments").add({
-            clientName,
-            email,
-            phone,
-            date,
-            time,
-            calendarEventId: gEvent.data.id,
-            reminderSent: true, // Pas besoin de rappel pour un blocage
-            createdAt: new Date()
-        });
+            // On boucle de 30min en 30min pour créer chaque créneau dans Firestore
+            while (current < end) {
+                const currentTimeStr = current.toTimeString().substring(0, 5);
+                slotsToBlock.push({
+                    clientName: clientName, // "⛔ INDISPONIBLE"
+                    email: email,
+                    phone: phone,
+                    date: date,
+                    time: currentTimeStr,
+                    isBlock: true,
+                    reminderSent: true,
+                    createdAt: new Date()
+                });
+                current.setMinutes(current.getMinutes() + 30);
+            }
+        } else {
+            // Si c'est sur plusieurs jours, on enregistre au moins le premier créneau 
+            // (Note: pour des vacances entières, la logique busy-slots devrait être adaptée)
+            slotsToBlock.push({
+                clientName: clientName,
+                email: email,
+                phone: phone,
+                date: date,
+                time: time,
+                isBlock: true,
+                reminderSent: true,
+                createdAt: new Date()
+            });
+        }
 
-        res.json({ success: true });
+        // Enregistrement groupé dans Firestore
+        const batch = db.batch();
+        slotsToBlock.forEach(slot => {
+            const docRef = db.collection("appointments").doc();
+            batch.set(docRef, slot);
+        });
+        await batch.commit();
+
+        res.json({ success: true, message: `${slotsToBlock.length} créneaux bloqués.` });
     } catch (error) {
-        console.error("Erreur lors du blocage manuel:", error);
+        console.error("Erreur blocage manuel:", error);
         res.status(500).json({ success: false });
     }
 });
