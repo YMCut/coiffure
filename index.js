@@ -295,9 +295,15 @@ app.get("/api/busy-slots", async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
 });
 
+// Route pour UptimeRobot et vérifier que le serveur est vivant
+app.get('/', (req, res) => {
+  res.send('Serveur actif et opérationnel !');
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Serveur YM actif sur le port ${PORT}`);
     sendReminders();
     cleanupOldAppointments();
+
 });
