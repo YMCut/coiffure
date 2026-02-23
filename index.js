@@ -135,21 +135,37 @@ app.post("/api/verify-request", async (req, res) => {
             });
         }
 
-        // --- 2. VÉRIFICATION DE DISPONIBILITÉ (ANTI-DOUBLON) ---
-        // On cherche si un rendez-vous existe déjà pour cette date et cette heure
-        const existingRdv = await db.collection("appointments")
+        // --- 2. VÉRIFICATION : UN SEUL RDV ACTIF PAR CLIENT (Email ou Tel) ---
+        // On cherche si ce client a déjà un rendez-vous à venir
+        const existingClientRdv = await db.collection("appointments")
+            .where("email", "==", email)
+            .get();
+        
+        const existingPhoneRdv = await db.collection("appointments")
+            .where("phone", "==", phone)
+            .get();
+
+        if (!existingClientRdv.empty || !existingPhoneRdv.empty) {
+            return res.status(400).json({ 
+                success: false, 
+                message: "Vous avez déjà un rendez-vous réservé. Vous pourrez en reprendre un nouveau une fois celui-ci passé." 
+            });
+        }
+
+        // --- 3. VÉRIFICATION DE DISPONIBILITÉ (CRÉNEAU DÉJÀ PRIS) ---
+        const existingSlot = await db.collection("appointments")
             .where("date", "==", date)
             .where("time", "==", time)
             .get();
 
-        if (!existingRdv.empty) {
+        if (!existingSlot.empty) {
             return res.status(400).json({ 
                 success: false, 
                 message: "Désolé, ce créneau vient d'être réservé par quelqu'un d'autre." 
             });
         }
 
-        // --- 3. GÉNÉRATION OTP ET ENVOI MAIL ---
+        // --- 4. GÉNÉRATION OTP ET ENVOI MAIL ---
         const otp = Math.floor(1000 + Math.random() * 9000).toString();
         await db.collection("temp_verifications").doc(email).set({ 
             otp, clientName, date, time, phone, createdAt: new Date() 
@@ -177,6 +193,7 @@ app.post("/api/verify-request", async (req, res) => {
             })
         });
         res.json({ success: true });
+
     } catch (error) { 
         console.error("Erreur verify-request:", error);
         res.status(500).json({ success: false }); 
