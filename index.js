@@ -126,7 +126,7 @@ app.post("/api/verify-request", async (req, res) => {
     if (!email || !date || !time || !clientName || !phone) return res.status(400).json({ success: false });
 
     try {
-        // --- VÉRIFICATION BLACKLIST ---
+        // --- 1. VÉRIFICATION DE LA BLACKLIST ---
         const blockedDoc = await db.collection("blacklist").doc(email).get();
         if (blockedDoc.exists) {
             return res.json({ 
@@ -135,8 +135,25 @@ app.post("/api/verify-request", async (req, res) => {
             });
         }
 
+        // --- 2. VÉRIFICATION DE DISPONIBILITÉ (ANTI-DOUBLON) ---
+        // On cherche si un rendez-vous existe déjà pour cette date et cette heure
+        const existingRdv = await db.collection("appointments")
+            .where("date", "==", date)
+            .where("time", "==", time)
+            .get();
+
+        if (!existingRdv.empty) {
+            return res.status(400).json({ 
+                success: false, 
+                message: "Désolé, ce créneau vient d'être réservé par quelqu'un d'autre." 
+            });
+        }
+
+        // --- 3. GÉNÉRATION OTP ET ENVOI MAIL ---
         const otp = Math.floor(1000 + Math.random() * 9000).toString();
-        await db.collection("temp_verifications").doc(email).set({ otp, clientName, date, time, phone, createdAt: new Date() });
+        await db.collection("temp_verifications").doc(email).set({ 
+            otp, clientName, date, time, phone, createdAt: new Date() 
+        });
 
         await fetch("https://api.brevo.com/v3/smtp/email", {
             method: "POST",
@@ -160,7 +177,10 @@ app.post("/api/verify-request", async (req, res) => {
             })
         });
         res.json({ success: true });
-    } catch (error) { res.status(500).json({ success: false }); }
+    } catch (error) { 
+        console.error("Erreur verify-request:", error);
+        res.status(500).json({ success: false }); 
+    }
 });
 
 app.post("/api/verify-confirm", async (req, res) => {
