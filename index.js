@@ -129,26 +129,37 @@ app.post("/api/verify-request", async (req, res) => {
         // --- 1. VÉRIFICATION DE LA BLACKLIST ---
         const blockedDoc = await db.collection("blacklist").doc(email).get();
         if (blockedDoc.exists) {
-            return res.json({ 
+            return res.status(200).json({ 
                 success: false, 
                 message: "Les réservations sont indisponibles pour ce compte." 
             });
         }
 
-        // --- 2. VÉRIFICATION : UN SEUL RDV ACTIF PAR CLIENT (Email ou Tel) ---
-        // On cherche si ce client a déjà un rendez-vous à venir
-        const existingClientRdv = await db.collection("appointments")
-            .where("email", "==", email)
-            .get();
+        // --- 2. VÉRIFICATION : UN SEUL RDV ACTIF PAR CLIENT ---
         
-        const existingPhoneRdv = await db.collection("appointments")
-            .where("phone", "==", phone)
+        // A. On vérifie l'email
+        const checkEmail = await db.collection("appointments")
+            .where("email", "==", email)
+            .limit(1)
             .get();
 
-        if (!existingClientRdv.empty || !existingPhoneRdv.empty) {
-            return res.status(400).json({ 
+        if (!checkEmail.empty) {
+            return res.status(200).json({ 
                 success: false, 
-                message: "Vous avez déjà un rendez-vous réservé. Vous pourrez en reprendre un nouveau une fois celui-ci passé." 
+                message: "Vous avez déjà un rendez-vous réservé avec cet email." 
+            });
+        }
+
+        // B. On vérifie le téléphone
+        const checkPhone = await db.collection("appointments")
+            .where("phone", "==", phone)
+            .limit(1)
+            .get();
+
+        if (!checkPhone.empty) {
+            return res.status(200).json({ 
+                success: false, 
+                message: "Ce numéro de téléphone est déjà lié à un rendez-vous actif." 
             });
         }
 
@@ -159,7 +170,7 @@ app.post("/api/verify-request", async (req, res) => {
             .get();
 
         if (!existingSlot.empty) {
-            return res.status(400).json({ 
+            return res.status(200).json({ 
                 success: false, 
                 message: "Désolé, ce créneau vient d'être réservé par quelqu'un d'autre." 
             });
@@ -171,9 +182,14 @@ app.post("/api/verify-request", async (req, res) => {
             otp, clientName, date, time, phone, createdAt: new Date() 
         });
 
+        // Envoi via Brevo
         await fetch("https://api.brevo.com/v3/smtp/email", {
             method: "POST",
-            headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
+            headers: { 
+                "accept": "application/json", 
+                "api-key": process.env.MAIL_PASS, 
+                "content-type": "application/json" 
+            },
             body: JSON.stringify({
                 sender: { name: "YM CUT", email: "coiffureym63@outlook.com" },
                 to: [{ email, name: clientName }],
@@ -192,11 +208,13 @@ app.post("/api/verify-request", async (req, res) => {
                     </div>`
             })
         });
+
         res.json({ success: true });
 
     } catch (error) { 
-        console.error("Erreur verify-request:", error);
-        res.status(500).json({ success: false }); 
+        console.error("Erreur serveur détaillée:", error);
+        // On renvoie un message plus propre au client en cas de vrai crash
+        res.status(500).json({ success: false, message: "Une erreur est survenue sur le serveur." }); 
     }
 });
 
