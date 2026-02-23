@@ -90,19 +90,19 @@ async function sendReminders() {
                     method: "POST",
                     headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
                     body: JSON.stringify({
-                        sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
+                        sender: { name: "YM CUT", email: "coiffureym63@outlook.com" },
                         to: [{ email: data.email, name: data.clientName }],
                         subject: "🔔 Rappel : Votre rendez-vous de demain - YM Coiffure",
                         htmlContent: `
                             <div style="${emailTheme.wrapper}">
                                 <div style="${emailTheme.container}">
-                                    <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM COIFFURE</h1></div>
+                                    <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM CUT</h1></div>
                                     <div style="${emailTheme.body}">
                                         <h2 style="${emailTheme.h2}">À DEMAIN ! ✂️</h2>
                                         <p>Bonjour <b>${data.clientName}</b>,</p>
                                         <p>Petit rappel pour votre coupe prévue demain à :</p>
                                         <div style="font-size:36px; font-weight:bold; margin:20px 0;">${data.time}</div>
-                                        <p style="color:#666;">📍 58 rue Abbé Prévost, Clermont-Ferrand</p>
+                                        <p style="color:#666;">📍Clermont-Ferrand</p>
                                     </div>
                                     <div style="${emailTheme.footer}">Merci de nous prévenir en cas d'annulation.</div>
                                 </div>
@@ -142,7 +142,7 @@ app.post("/api/verify-request", async (req, res) => {
             method: "POST",
             headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
             body: JSON.stringify({
-                sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
+                sender: { name: "YM CUT", email: "coiffureym63@outlook.com" },
                 to: [{ email, name: clientName }],
                 subject: "Code de validation – YM Coiffure",
                 htmlContent: `
@@ -197,16 +197,15 @@ app.post("/api/verify-confirm", async (req, res) => {
                 htmlContent: `
                     <div style="${emailTheme.wrapper}">
                         <div style="${emailTheme.container}">
-                            <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM COIFFURE</h1></div>
+                            <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM CUT</h1></div>
                             <div style="${emailTheme.body}">
                                 <h2 style="${emailTheme.h2}; color:#27ae60;">C'EST VALIDÉ !</h2>
                                 <p>Rendez-vous confirmé pour <b>${data.clientName}</b>.</p>
                                 <div style="background:#f9f9f9; padding:20px; border-radius:12px; margin:20px 0; text-align:left;">
                                     <p style="margin:5px 0;">📅 <b>Date :</b> ${data.date}</p>
                                     <p style="margin:5px 0;">🕒 <b>Heure :</b> ${data.time}</p>
-                                    <p style="margin:5px 0;">📍 <b>Lieu :</b> 58 rue Abbé Prévost, 63100 Clermont-Ferrand</p>
+                                    <p style="margin:5px 0;">📍 <b>Lieu :</b>Clermont-Ferrand</p>
                                 </div>
-                                <a href="https://www.google.com/maps/search/?api=1&query=58+rue+Abbé+Prévost+Clermont-Ferrand" style="${emailTheme.button}">Ouvrir Maps</a>
                             </div>
                         </div>
                     </div>`
@@ -295,15 +294,9 @@ app.get("/api/busy-slots", async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
 });
 
-// Route pour UptimeRobot et vérifier que le serveur est vivant
-app.get('/', (req, res) => {
-  res.send('Serveur actif et opérationnel !');
-});
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Serveur YM actif sur le port ${PORT}`);
     sendReminders();
     cleanupOldAppointments();
-
 });
