@@ -255,30 +255,54 @@ app.post("/api/appointments", checkAuth, async (req, res) => {
             return res.status(400).json({ error: "L'heure de fin doit être après l'heure de début" });
         }
 
+        // 1. On récupère TOUS les rendez-vous existants pour ce jour-là
+        const existingSnapshot = await db.collection("appointments")
+            .where("date", "==", date)
+            .get();
+        
+        // On crée une liste des heures déjà prises
+        const takenSlots = existingSnapshot.docs.map(doc => doc.data().time);
+
         const batch = db.batch();
         let count = 0;
+        let skipped = 0;
 
         while (current < end) {
             const timeStr = current.toTimeString().substring(0, 5);
-            const docRef = db.collection("appointments").doc(); // Crée un ID unique automatique
             
-            batch.set(docRef, {
-                clientName: clientName || "⛔ INDISPONIBLE",
-                date: date,
-                time: timeStr,
-                email: "admin@ym.fr",
-                phone: "0000000000",
-                reminderSent: true,
-                isBlock: true,
-                createdAt: new Date()
-            });
+            // 2. On vérifie si l'heure actuelle est déjà dans la liste des créneaux pris
+            if (!takenSlots.includes(timeStr)) {
+                const docRef = db.collection("appointments").doc(); 
+                
+                batch.set(docRef, {
+                    clientName: clientName || "⛔ INDISPONIBLE",
+                    date: date,
+                    time: timeStr,
+                    email: "admin@ym.fr",
+                    phone: "0000000000",
+                    reminderSent: true,
+                    isBlock: true,
+                    createdAt: new Date()
+                });
+                count++;
+            } else {
+                skipped++;
+            }
 
-            count++;
             current.setMinutes(current.getMinutes() + 30);
         }
 
-        await batch.commit();
-        res.json({ success: true, message: `${count} créneaux bloqués.` });
+        // 3. On n'exécute le batch que s'il y a des nouveaux créneaux à bloquer
+        if (count > 0) {
+            await batch.commit();
+        }
+
+        res.json({ 
+            success: true, 
+            message: `${count} créneaux bloqués.`,
+            skipped: skipped // Optionnel : pour savoir combien étaient déjà pris
+        });
+
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Erreur serveur" });
