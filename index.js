@@ -359,6 +359,122 @@ app.post("/api/appointments", checkAuth, async (req, res) => {
     }
 });
 
+// Bloquer une période entière (horaires automatiques selon le jour)
+app.post("/api/admin/block-period", checkAuth, async (req, res) => {
+    const { dateStart, dateEnd } = req.body;
+    if (!dateStart || !dateEnd) return res.status(400).json({ error: "Dates manquantes" });
+
+    try {
+        const [sy, sm, sd] = dateStart.split('-').map(Number);
+        const [ey, em, ed] = dateEnd.split('-').map(Number);
+        const start = new Date(sy, sm - 1, sd);
+        const end = new Date(ey, em - 1, ed);
+        if (end < start) return res.status(400).json({ error: "Date de fin avant date de début" });
+
+        let totalBlocked = 0;
+        let totalSkipped = 0;
+        const current = new Date(start);
+
+        while (current <= end) {
+            const day = current.getDay();
+            // Dimanche → on skip
+            if (day !== 0) {
+                const dateStr = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(current);
+                const hStart = day === 6 ? 10 : 14; // Samedi 10h, semaine 14h
+                const hEnd   = day === 6 ? 18 : 19; // Samedi 18h, semaine 19h
+
+                const existingSnap = await db.collection("appointments").where("date", "==", dateStr).get();
+                const takenSlots = existingSnap.docs.map(d => d.data().time);
+
+                const batch = db.batch();
+                let count = 0;
+                for (let h = hStart; h < hEnd; h++) {
+                    for (const m of ["00", "30"]) {
+                        const timeStr = `${String(h).padStart(2,'0')}:${m}`;
+                        if (!takenSlots.includes(timeStr)) {
+                            const ref = db.collection("appointments").doc();
+                            batch.set(ref, {
+                                clientName: "⛔ INDISPONIBLE", date: dateStr, time: timeStr,
+                                email: "admin@ym.fr", phone: "0000000000",
+                                reminderSent: true, isBlock: true, createdAt: new Date()
+                            });
+                            count++;
+                        } else { totalSkipped++; }
+                    }
+                }
+                if (count > 0) await batch.commit();
+                totalBlocked += count;
+            }
+            current.setDate(current.getDate() + 1);
+        }
+
+        res.json({ success: true, message: `${totalBlocked} créneaux bloqués, ${totalSkipped} déjà pris.` });
+
+        // Stocker la période dans closed_periods pour pouvoir la rouvrir
+        await db.collection("closed_periods").add({
+            dateStart, dateEnd, blockedAt: new Date()
+        });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+// Rouvrir un jour : supprime uniquement les blocs admin (isBlock: true)
+app.delete("/api/admin/unblock-day", checkAuth, async (req, res) => {
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ error: "Date manquante" });
+
+    try {
+        const snapshot = await db.collection("appointments")
+            .where("date", "==", date)
+            .where("isBlock", "==", true)
+            .get();
+
+        if (snapshot.empty) return res.json({ success: true, message: "Aucun bloc à supprimer." });
+
+        const batch = db.batch();
+        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+        res.json({ success: true, message: `${snapshot.size} blocs supprimés.` });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+// Ouvrir un dimanche (horaires fixes 10h-18h)
+app.post("/api/admin/open-sunday", checkAuth, async (req, res) => {
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ error: "Date manquante" });
+
+    const [y, m, d] = date.split('-').map(Number);
+    if (new Date(y, m - 1, d).getDay() !== 0) {
+        return res.status(400).json({ error: "Ce n'est pas un dimanche." });
+    }
+
+    try {
+        const existingSnap = await db.collection("appointments").where("date", "==", date).get();
+        const takenSlots = existingSnap.docs.map(doc => doc.data().time);
+
+        const batch = db.batch();
+        let count = 0;
+        // On bloque tout SAUF les créneaux 10h-18h → en fait on ne fait rien,
+        // un dimanche ouvert = pas de blocs, les créneaux 10h-18h sont libres par défaut.
+        // Donc on supprime les éventuels blocs admin existants sur ce dimanche.
+        existingSnap.docs.forEach(doc => {
+            if (doc.data().isBlock) { batch.delete(doc.ref); count++; }
+        });
+        if (count > 0) await batch.commit();
+
+        res.json({ success: true, message: `Dimanche ouvert. ${count} blocs supprimés.` });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
 app.get("/api/admin/appointments", checkAuth, async (req, res) => {
     try {
         const snapshot = await db.collection("appointments").orderBy("date", "desc").get();
@@ -409,6 +525,68 @@ app.post("/api/admin/toggle-status", checkAuth, async (req, res) => {
     res.json({ success: true, is_open });
 });
 
+// Lister les périodes fermées
+app.get("/api/admin/closed-periods", checkAuth, async (req, res) => {
+    try {
+        const snapshot = await db.collection("closed_periods").orderBy("blockedAt", "desc").get();
+        res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    } catch (e) { res.status(500).json({ error: "Erreur" }); }
+});
+
+// Rouvrir une période entière (supprime tous les blocs admin de chaque jour)
+app.delete("/api/admin/closed-periods/:id", checkAuth, async (req, res) => {
+    try {
+        const doc = await db.collection("closed_periods").doc(req.params.id).get();
+        if (!doc.exists) return res.status(404).json({ error: "Période introuvable" });
+
+        const { dateStart, dateEnd } = doc.data();
+        const [sy, sm, sd] = dateStart.split('-').map(Number);
+        const [ey, em, ed] = dateEnd.split('-').map(Number);
+        const current = new Date(sy, sm - 1, sd);
+        const end = new Date(ey, em - 1, ed);
+
+        let totalDeleted = 0;
+        while (current <= end) {
+            const dateStr = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(current);
+            const snap = await db.collection("appointments")
+                .where("date", "==", dateStr)
+                .where("isBlock", "==", true)
+                .get();
+            if (!snap.empty) {
+                const batch = db.batch();
+                snap.docs.forEach(d => batch.delete(d.ref));
+                await batch.commit();
+                totalDeleted += snap.size;
+            }
+            current.setDate(current.getDate() + 1);
+        }
+
+        await db.collection("closed_periods").doc(req.params.id).delete();
+        res.json({ success: true, message: `Période rouverte, ${totalDeleted} blocs supprimés.` });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+// Ouvrir un jour fermé manuellement (ex: dimanche)
+app.post("/api/admin/open-day", checkAuth, async (req, res) => {
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ error: "Date manquante" });
+    try {
+        await db.collection("open_days").doc(date).set({ openedAt: new Date() });
+        res.json({ success: true, message: `${date} marqué comme ouvert.` });
+    } catch (e) { res.status(500).json({ error: "Erreur serveur" }); }
+});
+
+// Refermer un jour ouvert manuellement
+app.delete("/api/admin/open-day/:date", checkAuth, async (req, res) => {
+    try {
+        await db.collection("open_days").doc(req.params.date).delete();
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: "Erreur serveur" }); }
+});
+
 app.get("/api/status", async (req, res) => {
     try {
         const doc = await db.collection("settings").doc("status").get();
@@ -422,6 +600,14 @@ app.get("/api/busy-slots", async (req, res) => {
         const snapshot = await db.collection("appointments").where("date", "==", date).get();
         res.json({ busySlots: snapshot.docs.map(doc => doc.data().time) });
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
+});
+
+// Vérifier si une date est ouverte manuellement
+app.get("/api/open-days", async (req, res) => {
+    try {
+        const snapshot = await db.collection("open_days").get();
+        res.json({ dates: snapshot.docs.map(doc => doc.id) });
+    } catch (e) { res.json({ dates: [] }); }
 });
 
 app.get('/', (req, res) => {
