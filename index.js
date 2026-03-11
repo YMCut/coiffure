@@ -53,17 +53,27 @@ const emailTheme = {
 // =======================================================
 
 async function cleanupOldAppointments() {
+    const nowParis = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Paris" }));
     const todayParis = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
     }).format(new Date());
+    const currentTimeParis = nowParis.getHours().toString().padStart(2, '0') + ":" + nowParis.getMinutes().toString().padStart(2, '0');
 
     try {
-        const snapshot = await db.collection("appointments").where("date", "<", todayParis).get();
-        if (snapshot.empty) return;
+        const snapshotOld = await db.collection("appointments").where("date", "<", todayParis).get();
+        const snapshotToday = await db.collection("appointments").where("date", "==", todayParis).get();
+
         const batch = db.batch();
-        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        let count = 0;
+
+        snapshotOld.docs.forEach(doc => { batch.delete(doc.ref); count++; });
+        snapshotToday.docs.forEach(doc => {
+            if (doc.data().time <= currentTimeParis) { batch.delete(doc.ref); count++; }
+        });
+
+        if (count === 0) return;
         await batch.commit();
-        console.log(`✅ Nettoyage : ${snapshot.size} anciens RDV supprimés.`);
+        console.log(`✅ Nettoyage : ${count} RDV supprimés.`);
     } catch (error) { console.error("❌ Erreur nettoyage:", error); }
 }
 
@@ -115,7 +125,7 @@ async function sendReminders() {
     } catch (error) { console.error("❌ Erreur rappels:", error); }
 }
 
-setInterval(() => { sendReminders(); cleanupOldAppointments(); }, 1800000);
+setInterval(() => { sendReminders(); cleanupOldAppointments(); }, 300000);
 
 // =======================================================
 // 4. ROUTES API
@@ -126,7 +136,6 @@ app.post("/api/verify-request", async (req, res) => {
     if (!email || !date || !time || !clientName || !phone) return res.status(400).json({ success: false });
 
     try {
-        // --- 1. VÉRIFICATION DE LA BLACKLIST ---
         const blockedDoc = await db.collection("blacklist").doc(email).get();
         if (blockedDoc.exists) {
             return res.status(200).json({ 
@@ -135,9 +144,6 @@ app.post("/api/verify-request", async (req, res) => {
             });
         }
 
-        // --- 2. VÉRIFICATION : UN SEUL RDV ACTIF PAR CLIENT ---
-        
-        // A. On vérifie l'email
         const checkEmail = await db.collection("appointments")
             .where("email", "==", email)
             .limit(1)
@@ -150,7 +156,6 @@ app.post("/api/verify-request", async (req, res) => {
             });
         }
 
-        // B. On vérifie le téléphone
         const checkPhone = await db.collection("appointments")
             .where("phone", "==", phone)
             .limit(1)
@@ -163,7 +168,6 @@ app.post("/api/verify-request", async (req, res) => {
             });
         }
 
-        // --- 3. VÉRIFICATION DE DISPONIBILITÉ (CRÉNEAU DÉJÀ PRIS) ---
         const existingSlot = await db.collection("appointments")
             .where("date", "==", date)
             .where("time", "==", time)
@@ -176,13 +180,13 @@ app.post("/api/verify-request", async (req, res) => {
             });
         }
 
-        // --- 4. GÉNÉRATION OTP ET ENVOI MAIL ---
         const otp = Math.floor(1000 + Math.random() * 9000).toString();
+        console.log(`[OTP] Généré pour ${email} : ${otp}`);
+
         await db.collection("temp_verifications").doc(email).set({ 
             otp, clientName, date, time, phone, createdAt: new Date() 
         });
 
-        // Envoi via Brevo
         await fetch("https://api.brevo.com/v3/smtp/email", {
             method: "POST",
             headers: { 
@@ -213,20 +217,32 @@ app.post("/api/verify-request", async (req, res) => {
 
     } catch (error) { 
         console.error("Erreur serveur détaillée:", error);
-        // On renvoie un message plus propre au client en cas de vrai crash
         res.status(500).json({ success: false, message: "Une erreur est survenue sur le serveur." }); 
     }
 });
 
 app.post("/api/verify-confirm", async (req, res) => {
     const { email, code } = req.body;
+    console.log(`[OTP] Reçu pour ${email} : "${code}" (type: ${typeof code})`);
     try {
         const vDoc = await db.collection("temp_verifications").doc(email).get();
-        if (!vDoc.exists || vDoc.data().otp !== code) return res.status(400).json({ success: false });
+        if (!vDoc.exists) {
+            console.log(`[OTP] Aucun document trouvé pour ${email}`);
+            return res.status(400).json({ success: false });
+        }
+        const storedOtp = vDoc.data().otp;
+        console.log(`[OTP] Stocké en base : "${storedOtp}" (type: ${typeof storedOtp})`);
+        if (storedOtp !== code) {
+            console.log(`[OTP] MISMATCH : "${storedOtp}" !== "${code}"`);
+            return res.status(400).json({ success: false });
+        }
 
         const data = vDoc.data();
         const startISO = `${data.date}T${data.time}:00`;
-        const endDate = new Date(new Date(startISO).getTime() + 30 * 60000);
+        const [h, m] = data.time.split(':').map(Number);
+        const endH = String(m === 30 ? h + 1 : h).padStart(2, '0');
+        const endM = m === 30 ? '00' : '30';
+        const endISO = `${data.date}T${endH}:${endM}:00`;
         
         const gEvent = await calendar.events.insert({
             calendarId: CALENDAR_ID,
@@ -234,7 +250,7 @@ app.post("/api/verify-confirm", async (req, res) => {
                 summary: `✂️ ${data.clientName}`,
                 description: `Tel: ${data.phone}`,
                 start: { dateTime: startISO, timeZone: "Europe/Paris" },
-                end: { dateTime: endDate.toISOString().split('.')[0], timeZone: "Europe/Paris" },
+                end: { dateTime: endISO, timeZone: "Europe/Paris" },
             },
         });
 
@@ -259,7 +275,8 @@ app.post("/api/verify-confirm", async (req, res) => {
                                 <div style="background:#f9f9f9; padding:20px; border-radius:12px; margin:20px 0; text-align:left;">
                                     <p style="margin:5px 0;">📅 <b>Date :</b> ${data.date}</p>
                                     <p style="margin:5px 0;">🕒 <b>Heure :</b> ${data.time}</p>
-                                    <p style="margin:5px 0;">📍 <b>Lieu :</b>Clermont-Ferrand</p>
+                                    <p style="margin:5px 0;">📍 <b>Lieu :</b> Clermont-Ferrand</p>
+                                    <p style="margin:5px 0;">👻 <b>Snap :</b> ym.cut</p>
                                 </div>
                             </div>
                         </div>
@@ -269,7 +286,10 @@ app.post("/api/verify-confirm", async (req, res) => {
 
         await db.collection("temp_verifications").doc(email).delete();
         res.json({ success: true });
-    } catch (error) { res.status(500).json({ success: false }); }
+    } catch (error) { 
+        console.error("Erreur verify-confirm:", error);
+        res.status(500).json({ success: false }); 
+    }
 });
 
 // --- ROUTES ADMIN ---
@@ -290,12 +310,10 @@ app.post("/api/appointments", checkAuth, async (req, res) => {
             return res.status(400).json({ error: "L'heure de fin doit être après l'heure de début" });
         }
 
-        // 1. On récupère TOUS les rendez-vous existants pour ce jour-là
         const existingSnapshot = await db.collection("appointments")
             .where("date", "==", date)
             .get();
         
-        // On crée une liste des heures déjà prises
         const takenSlots = existingSnapshot.docs.map(doc => doc.data().time);
 
         const batch = db.batch();
@@ -305,10 +323,8 @@ app.post("/api/appointments", checkAuth, async (req, res) => {
         while (current < end) {
             const timeStr = current.toTimeString().substring(0, 5);
             
-            // 2. On vérifie si l'heure actuelle est déjà dans la liste des créneaux pris
             if (!takenSlots.includes(timeStr)) {
                 const docRef = db.collection("appointments").doc(); 
-                
                 batch.set(docRef, {
                     clientName: clientName || "⛔ INDISPONIBLE",
                     date: date,
@@ -327,7 +343,6 @@ app.post("/api/appointments", checkAuth, async (req, res) => {
             current.setMinutes(current.getMinutes() + 30);
         }
 
-        // 3. On n'exécute le batch que s'il y a des nouveaux créneaux à bloquer
         if (count > 0) {
             await batch.commit();
         }
@@ -335,7 +350,7 @@ app.post("/api/appointments", checkAuth, async (req, res) => {
         res.json({ 
             success: true, 
             message: `${count} créneaux bloqués.`,
-            skipped: skipped // Optionnel : pour savoir combien étaient déjà pris
+            skipped: skipped
         });
 
     } catch (error) {
@@ -351,7 +366,6 @@ app.get("/api/admin/appointments", checkAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erreur lecture" }); }
 });
 
-// LISTER LA BLACKLIST
 app.get("/api/admin/blacklist", checkAuth, async (req, res) => {
     try {
         const snapshot = await db.collection("blacklist").get();
@@ -359,7 +373,6 @@ app.get("/api/admin/blacklist", checkAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erreur lecture blacklist" }); }
 });
 
-// BLOQUER UN EMAIL
 app.post("/api/admin/block-email", checkAuth, async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email manquant" });
@@ -372,7 +385,6 @@ app.post("/api/admin/block-email", checkAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erreur blacklist" }); }
 });
 
-// DÉBLOQUER UN EMAIL
 app.delete("/api/admin/block-email/:email", checkAuth, async (req, res) => {
     try {
         await db.collection("blacklist").doc(req.params.email).delete();
@@ -397,8 +409,6 @@ app.post("/api/admin/toggle-status", checkAuth, async (req, res) => {
     res.json({ success: true, is_open });
 });
 
-// --- ROUTES PUBLIQUES ---
-
 app.get("/api/status", async (req, res) => {
     try {
         const doc = await db.collection("settings").doc("status").get();
@@ -414,7 +424,6 @@ app.get("/api/busy-slots", async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
 });
 
-// Route pour UptimeRobot et vérifier que le serveur est vivant
 app.get('/', (req, res) => {
   res.send('Serveur actif et opérationnel !');
 });
