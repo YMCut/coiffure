@@ -263,7 +263,7 @@ app.post("/api/verify-confirm", async (req, res) => {
             headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
             body: JSON.stringify({
                 sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
-                to: [{ email, name: data.clientName }],
+                to: [{ email, name: data.clientName }, { email: "coiffureym63@outlook.com", name: "Confirmation" }],
                 subject: "✅ Confirmation – YM Coiffure",
                 htmlContent: `
                     <div style="${emailTheme.wrapper}">
@@ -276,6 +276,7 @@ app.post("/api/verify-confirm", async (req, res) => {
                                     <p style="margin:5px 0;">📅 <b>Date :</b> ${data.date}</p>
                                     <p style="margin:5px 0;">🕒 <b>Heure :</b> ${data.time}</p>
                                     <p style="margin:5px 0;">📍 <b>Lieu :</b> Clermont-Ferrand</p>
+                                    <p style="margin:5px 0;">📞 <b>Téléphone :</b> ${data.phone}</p>
                                     <p style="margin:5px 0;">👻 <b>Snap :</b> ym.cut</p>
                                 </div>
                             </div>
