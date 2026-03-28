@@ -276,7 +276,6 @@ app.post("/api/verify-confirm", async (req, res) => {
                                     <p style="margin:5px 0;">📅 <b>Date :</b> ${data.date}</p>
                                     <p style="margin:5px 0;">🕒 <b>Heure :</b> ${data.time}</p>
                                     <p style="margin:5px 0;">📍 <b>Lieu :</b> Clermont-Ferrand</p>
-                                    <p style="margin:5px 0;">📞 <b>Téléphone :</b> ${data.phone}</p>
                                     <p style="margin:5px 0;">👻 <b>Snap :</b> ym.cut</p>
                                 </div>
                             </div>
