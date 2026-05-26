@@ -378,9 +378,9 @@ app.post("/api/admin/block-period", checkAuth, async (req, res) => {
         while (current <= end) {
             const day = current.getDay();
             // Dimanche → on skip
-            if (day !== 0) {
+            if (day !== 0 && day !==1) {
                 const dateStr = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(current);
-                const hStart = day === 6 ? 10 : 14; // Samedi 10h, semaine 14h
+                const hStart = day === 6 ? 14 : 14; // Samedi 14h, semaine 14h
                 const hEnd   = day === 6 ? 18 : 19; // Samedi 18h, semaine 19h
 
                 const existingSnap = await db.collection("appointments").where("date", "==", dateStr).get();
