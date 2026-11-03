@@ -131,9 +131,17 @@ setInterval(() => { sendReminders(); cleanupOldAppointments(); }, 300000);
 // 4. ROUTES API
 // =======================================================
 
+// Prestations proposées (le prix est fixé côté serveur, jamais lu depuis le client)
+const SERVICES = {
+    classique: { label: "Coupe classique", price: 20 },
+    shampoing: { label: "Coupe + shampoing", price: 25 }
+};
+
 app.post("/api/verify-request", async (req, res) => {
-    const { email, clientName, date, time, phone } = req.body;
+    const { email, clientName, date, time, phone, service } = req.body;
     if (!email || !date || !time || !clientName || !phone) return res.status(400).json({ success: false });
+    // Sans "service" (ancienne version du site) on garde la coupe classique
+    const svc = SERVICES[service] || SERVICES.classique;
 
     try {
         const blockedDoc = await db.collection("blacklist").doc(email).get();
@@ -184,7 +192,7 @@ app.post("/api/verify-request", async (req, res) => {
         console.log(`[OTP] Généré pour ${email} : ${otp}`);
 
         await db.collection("temp_verifications").doc(email).set({ 
-            otp, clientName, date, time, phone, createdAt: new Date() 
+            otp, clientName, date, time, phone, service: svc.label, price: svc.price, createdAt: new Date() 
         });
 
         await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -247,8 +255,8 @@ app.post("/api/verify-confirm", async (req, res) => {
         const gEvent = await calendar.events.insert({
             calendarId: CALENDAR_ID,
             requestBody: {
-                summary: `✂️ ${data.clientName}`,
-                description: `Tel: ${data.phone}`,
+                summary: `✂️ ${data.clientName} – ${data.service || "Coupe classique"}`,
+                description: `Tel: ${data.phone}\nPrestation: ${data.service || "Coupe classique"} (${data.price || 20} €)`,
                 start: { dateTime: startISO, timeZone: "Europe/Paris" },
                 end: { dateTime: endISO, timeZone: "Europe/Paris" },
             },
@@ -275,8 +283,10 @@ app.post("/api/verify-confirm", async (req, res) => {
                                 <div style="background:#f9f9f9; padding:20px; border-radius:12px; margin:20px 0; text-align:left;">
                                     <p style="margin:5px 0;">📅 <b>Date :</b> ${data.date}</p>
                                     <p style="margin:5px 0;">🕒 <b>Heure :</b> ${data.time}</p>
+                                    <p style="margin:5px 0;">✂️ <b>Prestation :</b> ${data.service || "Coupe classique"} (${data.price || 20} €)</p>
                                     <p style="margin:5px 0;">📍 <b>Lieu :</b> Clermont-Ferrand</p>
                                     <p style="margin:5px 0;">👻 <b>Snap :</b> ym.cut</p>
+                                    <p style="margin:5px 0;">📷 <b>Insta :</b> ym._ct</p>
                                 </div>
                             </div>
                         </div>
