@@ -413,12 +413,12 @@ app.post("/api/admin/block-period", checkAuth, async (req, res) => {
             current.setDate(current.getDate() + 1);
         }
 
-        res.json({ success: true, message: `${totalBlocked} créneaux bloqués, ${totalSkipped} déjà pris.` });
-
-        // Stocker la période dans closed_periods pour pouvoir la rouvrir
+        // Stocker la période dans closed_periods pour pouvoir la rouvrir (avant de répondre)
         await db.collection("closed_periods").add({
             dateStart, dateEnd, blockedAt: new Date()
         });
+
+        res.json({ success: true, message: `${totalBlocked} créneaux bloqués, ${totalSkipped} déjà pris.` });
 
     } catch (error) {
         console.error(error);
