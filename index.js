@@ -33,20 +33,92 @@ const ADMIN_KEY = process.env.ADMIN_KEY || "Younes63";
 const CALENDAR_ID = "msallaky@gmail.com";
 
 // =======================================================
-// 2. STYLES DES EMAILS (DESIGN PREMIUM)
+// 2. E-MAILS (THÈME MARRON / BLANC, comme le site)
 // =======================================================
 
-const emailTheme = {
-    wrapper: "font-family:'Helvetica Neue',Arial,sans-serif; width:100%; background-color:#f4f4f4; padding:20px 0;",
-    container: "max-width:600px; margin:0 auto; background-color:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 4px 15px rgba(0,0,0,0.05);",
-    header: "background-color:#000000; padding:30px; text-align:center;",
-    body: "padding:40px 30px; text-align:center; color:#333333;",
-    h1: "color:#ffffff; margin:0; letter-spacing:4px; font-size:24px; text-transform:uppercase;",
-    h2: "font-size:20px; margin-bottom:20px; color:#000;",
-    otpBox: "background-color:#f8f8f8; border:2px dashed #000; border-radius:12px; padding:20px; margin:20px 0; font-size:32px; font-weight:bold; letter-spacing:8px;",
-    button: "display:inline-block; padding:15px 30px; background-color:#000; color:#fff; text-decoration:none; border-radius:8px; font-weight:bold; margin-top:20px;",
-    footer: "padding:20px; text-align:center; font-size:12px; color:#999;"
+const MAIL = {
+    brown: "#4e2a18", cream: "#efdac5", paper: "#f8f3ee", line: "#e6d9cc", muted: "#8a6e5c", page: "#f3ece4",
+    serif: "Georgia, 'Times New Roman', serif",
+    sans: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+    script: "'Snell Roundhand', 'Brush Script MT', 'Segoe Script', cursive"
 };
+
+const escapeHtml = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function formatDateFr(dateStr) {
+    const [y, m, d] = String(dateStr).split("-").map(Number);
+    return new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })
+        .format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+function emailLayout(innerHtml, footerHtml = "") {
+    return `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0; padding:0; background-color:${MAIL.page};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${MAIL.page};">
+<tr><td align="center" style="padding:28px 12px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; background-color:#ffffff; border-radius:20px; overflow:hidden; border:1px solid ${MAIL.line};">
+    <tr><td align="center" style="background-color:${MAIL.brown}; padding:38px 20px 32px;">
+      <div style="font-family:${MAIL.serif}; font-size:46px; line-height:1; letter-spacing:12px; padding-left:12px; color:${MAIL.cream};">YM</div>
+      <div style="font-family:${MAIL.script}; font-style:italic; font-size:28px; line-height:1.2; color:${MAIL.cream}; margin-top:4px; padding-left:34px;">cut</div>
+    </td></tr>
+    <tr><td align="center" style="padding:38px 30px 30px; font-family:${MAIL.sans}; font-size:16px; line-height:1.6; color:${MAIL.brown};">
+      ${innerHtml}
+    </td></tr>
+    <tr><td align="center" style="background-color:${MAIL.paper}; border-top:1px solid ${MAIL.line}; padding:22px 30px; font-family:${MAIL.sans}; font-size:13px; line-height:1.6; color:${MAIL.muted};">
+      ${footerHtml}
+    </td></tr>
+  </table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+function detailRow(label, value) {
+    return `<tr>
+      <td style="padding:12px 0; border-bottom:1px solid ${MAIL.line}; font-size:14px; color:${MAIL.muted}; text-align:left;">${label}</td>
+      <td style="padding:12px 0; border-bottom:1px solid ${MAIL.line}; font-weight:600; color:${MAIL.brown}; text-align:right;">${value}</td>
+    </tr>`;
+}
+
+function otpEmail(name, otp) {
+    return emailLayout(`
+      <h1 style="margin:0 0 14px; font-family:${MAIL.serif}; font-size:30px; font-weight:normal; color:${MAIL.brown};">Votre code de validation</h1>
+      <p style="margin:0 0 26px;">Bonjour ${escapeHtml(name)}, voici votre code pour confirmer votre rendez-vous.</p>
+      <div style="display:inline-block; background-color:${MAIL.paper}; border:1px solid ${MAIL.line}; border-radius:14px; padding:18px 22px 18px 34px; font-family:${MAIL.serif}; font-size:40px; letter-spacing:12px; color:${MAIL.brown};">${otp}</div>
+      <p style="margin:26px 0 0; font-size:14px; color:${MAIL.muted};">Ce code est valable 10 minutes.</p>`,
+      `Vous n’êtes pas à l’origine de cette demande ? Ignorez simplement cet e-mail.`);
+}
+
+function confirmationEmail(data) {
+    const service = escapeHtml(data.service || "Coupe classique");
+    return emailLayout(`
+      <h1 style="margin:0 0 14px; font-family:${MAIL.serif}; font-size:30px; font-weight:normal; color:${MAIL.brown};">Rendez-vous confirmé</h1>
+      <p style="margin:0 0 26px;">Bonjour ${escapeHtml(data.clientName)}, votre rendez-vous est bien enregistré.</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${MAIL.paper}; border:1px solid ${MAIL.line}; border-radius:16px;">
+        <tr><td style="padding:6px 22px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:${MAIL.sans}; font-size:16px;">
+            ${detailRow("Date", escapeHtml(formatDateFr(data.date)))}
+            ${detailRow("Heure", escapeHtml(data.time))}
+            ${detailRow("Prestation", service)}
+            ${detailRow("Lieu", "Clermont-Ferrand")}
+          </table>
+        </td></tr>
+      </table>
+      <p style="margin:24px 0 6px; font-size:15px;">Paiement en espèces uniquement.</p>
+      <p style="margin:0; font-size:15px; color:${MAIL.muted};">Snapchat <b style="color:${MAIL.brown};">ym.cut</b> &nbsp;·&nbsp; Instagram <a href="https://www.instagram.com/ym._ct/" style="color:${MAIL.brown}; font-weight:bold;">ym._ct</a></p>`,
+      `Un empêchement ? Prévenez-nous au moins 24 h à l’avance : un rendez-vous non annulé bloque vos prochaines réservations.`);
+}
+
+function reminderEmail(data) {
+    return emailLayout(`
+      <h1 style="margin:0 0 14px; font-family:${MAIL.serif}; font-size:30px; font-weight:normal; color:${MAIL.brown};">À demain !</h1>
+      <p style="margin:0 0 20px;">Bonjour ${escapeHtml(data.clientName)}, petit rappel pour votre rendez-vous de demain à&nbsp;:</p>
+      <div style="display:inline-block; background-color:${MAIL.paper}; border:1px solid ${MAIL.line}; border-radius:14px; padding:14px 34px; font-family:${MAIL.serif}; font-size:44px; line-height:1.1; color:${MAIL.brown};">${escapeHtml(data.time)}</div>
+      <p style="margin:22px 0 4px; font-size:15px;">${escapeHtml(data.service || "Coupe classique")}</p>
+      <p style="margin:0; font-size:15px; color:${MAIL.muted};">Clermont-Ferrand</p>`,
+      `Un empêchement ? Merci de nous prévenir dès que possible.<br>Snapchat <b style="color:${MAIL.brown};">ym.cut</b> &nbsp;·&nbsp; Instagram <a href="https://www.instagram.com/ym._ct/" style="color:${MAIL.brown}; font-weight:bold;">ym._ct</a>`);
+}
 
 // =======================================================
 // 3. FONCTIONS DE MAINTENANCE
@@ -100,23 +172,10 @@ async function sendReminders() {
                     method: "POST",
                     headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
                     body: JSON.stringify({
-                        sender: { name: "YM CUT", email: "coiffureym63@outlook.com" },
+                        sender: { name: "YM cut", email: "coiffureym63@outlook.com" },
                         to: [{ email: data.email, name: data.clientName }],
-                        subject: "🔔 Rappel : Votre rendez-vous de demain - YM Coiffure",
-                        htmlContent: `
-                            <div style="${emailTheme.wrapper}">
-                                <div style="${emailTheme.container}">
-                                    <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM CUT</h1></div>
-                                    <div style="${emailTheme.body}">
-                                        <h2 style="${emailTheme.h2}">À DEMAIN ! ✂️</h2>
-                                        <p>Bonjour <b>${data.clientName}</b>,</p>
-                                        <p>Petit rappel pour votre coupe prévue demain à :</p>
-                                        <div style="font-size:36px; font-weight:bold; margin:20px 0;">${data.time}</div>
-                                        <p style="color:#666;">📍Clermont-Ferrand</p>
-                                    </div>
-                                    <div style="${emailTheme.footer}">Merci de nous prévenir en cas d'annulation.</div>
-                                </div>
-                            </div>`
+                        subject: "Rappel : votre rendez-vous de demain – YM cut",
+                        htmlContent: reminderEmail(data)
                     })
                 });
                 await doc.ref.update({ reminderSent: true });
@@ -139,6 +198,15 @@ app.post("/api/verify-request", async (req, res) => {
     console.log(`[RDV] shampoing reçu : ${shampoing} -> ${service}`);
 
     try {
+        // Dimanche / lundi : réservable uniquement si le jour a été ouvert manuellement
+        const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
+        if (dow === 0 || dow === 1) {
+            const openDoc = await db.collection("open_days").doc(date).get();
+            if (!openDoc.exists) {
+                return res.status(200).json({ success: false, message: "Le salon est fermé ce jour-là." });
+            }
+        }
+
         const blockedDoc = await db.collection("blacklist").doc(email).get();
         if (blockedDoc.exists) {
             return res.status(200).json({ 
@@ -198,21 +266,10 @@ app.post("/api/verify-request", async (req, res) => {
                 "content-type": "application/json" 
             },
             body: JSON.stringify({
-                sender: { name: "YM CUT", email: "coiffureym63@outlook.com" },
+                sender: { name: "YM cut", email: "coiffureym63@outlook.com" },
                 to: [{ email, name: clientName }],
-                subject: "Code de validation – YM Coiffure",
-                htmlContent: `
-                    <div style="${emailTheme.wrapper}">
-                        <div style="${emailTheme.container}">
-                            <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM COIFFURE</h1></div>
-                            <div style="${emailTheme.body}">
-                                <h2 style="${emailTheme.h2}">VÉRIFICATION</h2>
-                                <p>Bonjour ${clientName}, voici votre code pour confirmer votre rendez-vous :</p>
-                                <div style="${emailTheme.otpBox}">${otp}</div>
-                                <p style="font-size:13px; color:#999;">Ce code est valable 10 minutes.</p>
-                            </div>
-                        </div>
-                    </div>`
+                subject: "Votre code de validation – YM cut",
+                htmlContent: otpEmail(clientName, otp)
             })
         });
 
@@ -265,27 +322,10 @@ app.post("/api/verify-confirm", async (req, res) => {
             method: "POST",
             headers: { "accept": "application/json", "api-key": process.env.MAIL_PASS, "content-type": "application/json" },
             body: JSON.stringify({
-                sender: { name: "YM Coiffure", email: "coiffureym63@outlook.com" },
+                sender: { name: "YM cut", email: "coiffureym63@outlook.com" },
                 to: [{ email, name: data.clientName }, { email: "coiffureym63send@outlook.fr", name: "Confirmation" }],
-                subject: "✅ Confirmation – YM Coiffure",
-                htmlContent: `
-                    <div style="${emailTheme.wrapper}">
-                        <div style="${emailTheme.container}">
-                            <div style="${emailTheme.header}"><h1 style="${emailTheme.h1}">YM CUT</h1></div>
-                            <div style="${emailTheme.body}">
-                                <h2 style="${emailTheme.h2}; color:#27ae60;">C'EST VALIDÉ !</h2>
-                                <p>Rendez-vous confirmé pour <b>${data.clientName}</b>.</p>
-                                <div style="background:#f9f9f9; padding:20px; border-radius:12px; margin:20px 0; text-align:left;">
-                                    <p style="margin:5px 0;">📅 <b>Date :</b> ${data.date}</p>
-                                    <p style="margin:5px 0;">🕒 <b>Heure :</b> ${data.time}</p>
-                                    <p style="margin:5px 0;">✂️ <b>Prestation :</b> ${data.service || "Coupe classique"}</p>
-                                    <p style="margin:5px 0;">📍 <b>Lieu :</b> Clermont-Ferrand</p>
-                                    <p style="margin:5px 0;">👻 <b>Snap :</b> ym.cut</p>
-                                    <p style="margin:5px 0;">📷 <b>Insta :</b> ym._ct</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>`
+                subject: "Confirmation de votre rendez-vous – YM cut",
+                htmlContent: confirmationEmail(data)
             })
         });
 
